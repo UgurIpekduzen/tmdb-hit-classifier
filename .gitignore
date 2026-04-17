@@ -220,3 +220,5 @@ mlflow_backups/
 # Claude
 .claude/
 CLAUDE.md
+
+docs/
