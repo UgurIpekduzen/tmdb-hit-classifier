@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+import logging
+import warnings
 from datetime import datetime
 from typing import Callable
+
+logging.getLogger("mlflow").setLevel(logging.ERROR)
+warnings.filterwarnings("ignore", module="mlflow")
 
 import mlflow
 import mlflow.lightgbm
@@ -33,7 +38,7 @@ _DIRECTION = {
 }
 
 
-_GAP_PENALTY_FACTOR = 2.0   # Her 0.01 aşım için skoru 0.02 düşür/artır
+_GAP_PENALTY_FACTOR = 4.0   # Her 0.01 aşım için skoru 0.04 düşür/artır
 
 
 # ── Yerleşik model factory'leri ────────────────────────────────────────────────
@@ -45,9 +50,11 @@ def _lgbm_fn(ir: int) -> Callable:
             n_estimators      = trial.suggest_int("n_estimators", 100, 800),
             learning_rate     = trial.suggest_float("learning_rate", 0.01, 0.15, log=True),
             num_leaves        = trial.suggest_int("num_leaves", 15, 63),
-            min_child_samples = trial.suggest_int("min_child_samples", 10, 50),
+            min_child_samples = trial.suggest_int("min_child_samples", 20, 100),
             reg_alpha         = trial.suggest_float("reg_alpha", 1e-4, 1.0, log=True),
-            reg_lambda        = trial.suggest_float("reg_lambda", 1e-4, 1.0, log=True),
+            reg_lambda        = trial.suggest_float("reg_lambda", 1e-4, 10.0, log=True),
+            subsample         = trial.suggest_float("subsample", 0.5, 0.9),
+            colsample_bytree  = trial.suggest_float("colsample_bytree", 0.5, 0.9),
             scale_pos_weight  = ir,
             random_state      = RANDOM_STATE,
             verbose           = -1,
@@ -182,7 +189,7 @@ def tune_model(model_name: str, X, y, task_type: str,
     main_metric = MAIN_METRIC[task_type]
     direction   = _DIRECTION[main_metric]
     ir          = (
-        int((y == 0).sum() / (y == 1).sum())
+        (y == 0).sum() / (y == 1).sum()
         if task_type in ("binary", "multiclass") else 1
     )
 

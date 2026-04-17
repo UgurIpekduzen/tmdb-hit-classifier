@@ -1,6 +1,11 @@
 from __future__ import annotations
 
+import logging
+import warnings
 from pathlib import Path
+
+logging.getLogger("mlflow").setLevel(logging.ERROR)
+warnings.filterwarnings("ignore", module="mlflow")
 
 import matplotlib.pyplot as plt
 import mlflow
@@ -85,19 +90,19 @@ def get_scoring(task_type: str) -> dict:
         }
 
 
-def compute_cv_metrics(model, X, y, cv, task_type: str) -> tuple[dict, dict]:
-    """CV ile metrikleri hesapla; (val_metrics, train_metrics) döndürür."""
+def compute_cv_metrics(model, X, y, cv, task_type: str) -> tuple[dict, dict, dict]:
+    """CV ile metrikleri hesapla; (val_metrics, train_metrics, val_stds) döndürür."""
     scoring = get_scoring(task_type)
     raw = cross_validate(model, X, y, cv=cv, scoring=scoring,
                          return_train_score=True, n_jobs=1)
 
-    def _extract(prefix):
-        m = {k: float(np.mean(v)) for k, v in raw.items() if k.startswith(prefix)}
+    def _extract(prefix, agg=np.mean):
+        m = {k: float(agg(v)) for k, v in raw.items() if k.startswith(prefix)}
         m = {k.replace(prefix, ""): v for k, v in m.items()}
         m = {k: abs(v) if k in ("rmse", "mae") else v for k, v in m.items()}
         return m
 
-    return _extract("test_"), _extract("train_")
+    return _extract("test_"), _extract("train_"), _extract("test_", agg=np.std)
 
 
 def _plot_residuals(model, X, y, title: str):
@@ -219,7 +224,7 @@ def log_run(scenario: str, model_name: str, model, X, y, cv, task_type: str,
             params.update(extra_params)
         mlflow.log_params(params)
 
-        val_metrics, train_metrics = compute_cv_metrics(model, X, y, cv, task_type)
+        val_metrics, train_metrics, val_stds = compute_cv_metrics(model, X, y, cv, task_type)
         mlflow.log_metrics(val_metrics)
         mlflow.log_metrics({f"train_{k}": v for k, v in train_metrics.items()})
 
@@ -243,7 +248,7 @@ def log_run(scenario: str, model_name: str, model, X, y, cv, task_type: str,
             f"gap={gap:+.3f}"
         )
 
-    return {"val": val_metrics, "train": train_metrics}
+    return {"val": val_metrics, "train": train_metrics, "val_std": val_stds}
 
 
 _OVERFIT_THRESHOLD  = 0.20

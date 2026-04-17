@@ -44,7 +44,7 @@ def generate_experiment_report(
 
     all_runs = mlflow.search_runs(
         experiment_names=[experiment_name],
-        order_by=["start_time ASC"],
+        order_by=["start_time DESC"],
     )
 
     def _filter(tag_val):
@@ -52,9 +52,16 @@ def generate_experiment_report(
             return all_runs.iloc[0:0]
         return all_runs[all_runs["tags.type"] == tag_val]
 
-    baseline_runs = _filter("baseline")
-    tuning_runs   = _filter("tuning")
-    test_runs     = _filter("test_evaluation")
+    # Her model tipi için sadece en güncel run'ı göster
+    baseline_runs = (
+        _filter("baseline")
+        .drop_duplicates(subset=["tags.model_type"], keep="first")
+    )
+    tuning_runs = (
+        _filter("tuning")
+        .drop_duplicates(subset=["tags.model_type"], keep="first")
+    )
+    test_runs = _filter("test_evaluation").head(1)
 
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
 
