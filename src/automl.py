@@ -106,6 +106,9 @@ def tune_all_models(
     n_trials: int = 50,
     max_gap: float | None = None,
     model_fn_map: dict | None = None,
+    X_val=None,
+    y_val=None,
+    jaccard_threshold: float = 0.60,
 ) -> tuple:
     """
     Tüm modelleri tune eder; geçerli modeller normal tuning, overfit modeller
@@ -124,11 +127,17 @@ def tune_all_models(
         Overfit tespiti ve penalizasyon eşiği (None → _OVERFIT_THRESHOLD kullanılır).
     model_fn_map : dict | None
         Yerleşik olmayan modeller için {model_name: model_fn} eşlemesi.
+    X_val, y_val :
+        Jaccard hesabı için validation seti. Verilmezse ensemble_candidates boş döner.
+    jaccard_threshold : float
+        Bu eşiğin altındaki Jaccard değeri ensemble adaylığı gösterir. Varsayılan: 0.60.
 
     Returns
     -------
-    best_model : fit edilmiş en iyi model
-    best_name  : en iyi model adı
+    best_model          : fit edilmiş en iyi model
+    best_name           : en iyi model adı
+    all_tuned           : {model_name: model} tüm tuned modeller
+    ensemble_candidates : {model_name: model} Jaccard < threshold olan modeller
     """
     main_metric   = MAIN_METRIC[task_type]
     gap_threshold = _OVERFIT_THRESHOLD
@@ -142,6 +151,7 @@ def tune_all_models(
     best_model = None
     best_name  = None
     best_score = -np.inf
+    all_tuned  = {}
 
     # 1. Geçerli modelleri tune et
     for name, r in valid_models.items():
@@ -162,6 +172,7 @@ def tune_all_models(
         )
         tuned_score = study.best_trial.user_attrs.get("val_score", study.best_value)
         improvement = tuned_score - baseline_score
+        all_tuned[name] = tuned_model
 
         if improvement < min_improvement:
             print(f"  — {name}: iyileşme yetersiz ({improvement:+.4f} < {min_improvement:.4f}) — elendi")
@@ -195,6 +206,7 @@ def tune_all_models(
             )
             rec_score = rec_study.best_trial.user_attrs.get("val_score", rec_study.best_value)
             rec_gap   = rec_study.best_trial.user_attrs.get("gap", None)
+            all_tuned[name] = rec_model
 
             if rec_gap is not None and rec_gap > gap_threshold:
                 print(f"  ✗ {name}: recovery sonrası hala overfit (gap={rec_gap:.4f}) — elendi")
@@ -212,6 +224,25 @@ def tune_all_models(
         raise RuntimeError("Hiçbir model tune edilemedi — pipeline durduruluyor.")
 
     print(f"\n✓ tune_all_models tamamlandı — best: {best_name}  ({main_metric}={best_score:.4f})")
-    return best_model, best_name
 
-    return best_model, best_name
+    # 3. Jaccard tabanlı ensemble aday filtresi
+    ensemble_candidates = {}
+    if X_val is not None and y_val is not None and len(all_tuned) > 1:
+        print(f"\n── Ensemble Aday Analizi (Jaccard eşik={jaccard_threshold}) ──")
+        best_wrong = set(np.where(best_model.predict(X_val) != y_val)[0])
+        for name, model in all_tuned.items():
+            if name == best_name:
+                continue
+            model_wrong = set(np.where(model.predict(X_val) != y_val)[0])
+            union   = len(best_wrong | model_wrong)
+            jaccard = len(best_wrong & model_wrong) / union if union > 0 else 0.0
+            if jaccard < jaccard_threshold:
+                ensemble_candidates[name] = model
+                print(f"  {best_name} ↔ {name}: Jaccard={jaccard:.2f} → ensemble adayı ✓")
+            else:
+                print(f"  {best_name} ↔ {name}: Jaccard={jaccard:.2f} → atlandı (>{jaccard_threshold})")
+
+        if not ensemble_candidates:
+            print("  Yeterli çeşitlilik yok — ensemble önerilmiyor.")
+
+    return best_model, best_name, all_tuned, ensemble_candidates
