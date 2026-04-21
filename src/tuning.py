@@ -144,7 +144,8 @@ def _build_objective(model_fn: Callable, X, y, task_type: str,
 def tune_model(model_name: str, X, y, task_type: str,
                baseline_score: float, n_trials: int = 50,
                max_gap: float | None = None,
-               model_fn: Callable | None = None):
+               model_fn: Callable | None = None,
+               feature_version: str = ""):
     """
     Optuna ile hiperparametre araması yapar, MLflow'a loglar.
 
@@ -239,7 +240,10 @@ def tune_model(model_name: str, X, y, task_type: str,
 
     # MLflow'a logla
     with mlflow.start_run(run_name=f"tuning_{model_name}_{datetime.now():%Y%m%d_%H%M}"):
-        mlflow.set_tags({"stage": "tuning", "model_type": model_name, "type": "tuning"})
+        tags = {"stage": "tuning", "model_type": model_name, "type": "tuning"}
+        if feature_version:
+            tags["feature_version"] = feature_version
+        mlflow.set_tags(tags)
         mlflow.log_params(study.best_params)
         mlflow.log_metric(f"tuned_{main_metric}",    real_val_score)
         mlflow.log_metric(f"baseline_{main_metric}", baseline_score)

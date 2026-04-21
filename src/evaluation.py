@@ -35,6 +35,8 @@ def evaluate_test(
     model_name: str = "",
     cv_metrics: dict | None = None,
     experiment_name: str = "",
+    feature_version: str = "",
+    features: list | None = None,
 ) -> dict:
     """
     Task type'a göre test metriklerini hesaplar, grafikleri çizer ve metrikleri döndürür.
@@ -182,16 +184,21 @@ def evaluate_test(
             )
             with mlflow.start_run(run_name=run_name,
                                   experiment_id=experiment.experiment_id):
-                mlflow.set_tags({
+                tags = {
                     "type":  "test_evaluation",
                     "stage": "test",
                     "model": model_name,
-                })
+                }
+                if feature_version:
+                    tags["feature_version"] = feature_version
+                mlflow.set_tags(tags)
                 mlflow.log_metrics({
                     f"test_{k.lower().replace('-', '_')}": v
                     for k, v in test_metrics.items()
                 })
                 mlflow.log_figure(fig, "test_evaluation.png")
+                if features is not None:
+                    mlflow.log_dict({"features": features}, "features.json")
             print(f"✓ Test metrikleri MLflow'a kaydedildi")
 
     plt.show()

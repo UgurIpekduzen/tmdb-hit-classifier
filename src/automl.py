@@ -17,6 +17,7 @@ def recover_overfit(
     max_gap: float | None = None,
     n_trials: int = 25,
     model_fn_map: dict | None = None,
+    feature_version: str = "",
 ) -> tuple:
     """
     Baseline'da overfit olan modelleri recovery tuning ile tune eder.
@@ -71,14 +72,15 @@ def recover_overfit(
 
         print(f"\n── Recovery Tuning: {name} ──")
         rec_model, rec_study = tune_model(
-            model_name     = name,
-            X              = X,
-            y              = y,
-            task_type      = task_type,
-            baseline_score = r["val"][main_metric],
-            n_trials       = n_trials,
-            max_gap        = max_gap,
-            model_fn       = fn,
+            model_name      = name,
+            X               = X,
+            y               = y,
+            task_type       = task_type,
+            baseline_score  = r["val"][main_metric],
+            n_trials        = n_trials,
+            max_gap         = max_gap,
+            model_fn        = fn,
+            feature_version = feature_version,
         )
         rec_score = rec_study.best_trial.user_attrs.get("val_score", rec_study.best_value)
         rec_gap   = rec_study.best_trial.user_attrs.get("gap", None)
@@ -109,6 +111,7 @@ def tune_all_models(
     X_val=None,
     y_val=None,
     jaccard_threshold: float = 0.60,
+    feature_version: str = "",
 ) -> tuple:
     """
     Tüm modelleri tune eder; geçerli modeller normal tuning, overfit modeller
@@ -161,14 +164,15 @@ def tune_all_models(
         print(f"\n── Tuning: {name}  (baseline={baseline_score:.4f}  min_improvement={min_improvement:.4f}) ──")
         fn = (model_fn_map or {}).get(name)
         tuned_model, study = tune_model(
-            model_name     = name,
-            X              = X,
-            y              = y,
-            task_type      = task_type,
-            baseline_score = baseline_score,
-            n_trials       = n_trials,
-            max_gap        = max_gap,
-            model_fn       = fn,
+            model_name      = name,
+            X               = X,
+            y               = y,
+            task_type       = task_type,
+            baseline_score  = baseline_score,
+            n_trials        = n_trials,
+            max_gap         = max_gap,
+            model_fn        = fn,
+            feature_version = feature_version,
         )
         tuned_score = study.best_trial.user_attrs.get("val_score", study.best_value)
         improvement = tuned_score - baseline_score
@@ -195,14 +199,15 @@ def tune_all_models(
             fn = (model_fn_map or {}).get(name)
             print(f"\n── Recovery Tuning: {name} ──")
             rec_model, rec_study = tune_model(
-                model_name     = name,
-                X              = X,
-                y              = y,
-                task_type      = task_type,
-                baseline_score = r["val"][main_metric],
-                n_trials       = n_trials,
-                max_gap        = max_gap,
-                model_fn       = fn,
+                model_name      = name,
+                X               = X,
+                y               = y,
+                task_type       = task_type,
+                baseline_score  = r["val"][main_metric],
+                n_trials        = n_trials,
+                max_gap         = max_gap,
+                model_fn        = fn,
+                feature_version = feature_version,
             )
             rec_score = rec_study.best_trial.user_attrs.get("val_score", rec_study.best_value)
             rec_gap   = rec_study.best_trial.user_attrs.get("gap", None)
