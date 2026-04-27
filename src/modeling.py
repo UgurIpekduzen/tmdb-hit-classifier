@@ -17,6 +17,14 @@ import shap
 from IPython.display import display
 from lightgbm import LGBMClassifier
 from sklearn.ensemble import RandomForestClassifier
+try:
+    from xgboost import XGBClassifier as _XGBClassifier
+except ImportError:
+    _XGBClassifier = None
+try:
+    from catboost import CatBoostClassifier as _CatBoostClassifier
+except ImportError:
+    _CatBoostClassifier = None
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import ConfusionMatrixDisplay, confusion_matrix, fbeta_score, make_scorer
 from sklearn.model_selection import (
@@ -167,7 +175,22 @@ def log_shap(model, X, model_name: str = "", task_type: str = "binary") -> pd.Se
     X_transformed = model[:-1].transform(X) if isinstance(model, Pipeline) else X
     feature_names = X.columns.tolist()
 
-    if isinstance(estimator, (LGBMClassifier, RandomForestClassifier)):
+    _tree_types = tuple(
+        t for t in [LGBMClassifier, RandomForestClassifier]
+        if t is not None
+    )
+    _native_importance_types = tuple(
+        t for t in [_XGBClassifier, _CatBoostClassifier]
+        if t is not None
+    )
+    if _native_importance_types and isinstance(estimator, _native_importance_types):
+        # XGBoost/CatBoost: native feature importance kullan (shap string format uyumsuzluğu)
+        importances = estimator.feature_importances_
+        mean_shap = pd.Series(np.array(importances, dtype=float), index=feature_names)
+        if mlflow.active_run():
+            mlflow.log_metrics({f"shap_{col}": float(val) for col, val in mean_shap.items()})
+        return mean_shap
+    elif isinstance(estimator, _tree_types):
         explainer = shap.TreeExplainer(estimator)
         shap_values = explainer.shap_values(X_transformed)
     else:
