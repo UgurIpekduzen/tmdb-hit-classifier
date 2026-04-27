@@ -18,7 +18,7 @@ from IPython.display import display
 from lightgbm import LGBMClassifier
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import ConfusionMatrixDisplay, confusion_matrix
+from sklearn.metrics import ConfusionMatrixDisplay, confusion_matrix, fbeta_score, make_scorer
 from sklearn.model_selection import (
     KFold,
     StratifiedKFold,
@@ -32,7 +32,7 @@ RANDOM_STATE = 42
 VALID_TASK_TYPES = {"binary", "multiclass", "regression", "timeseries", "multilabel"}
 
 MAIN_METRIC = {
-    "binary":     "avg_prec",
+    "binary":     "f2",
     "multiclass": "f1",
     "regression": "rmse",
     "timeseries": "rmse",
@@ -65,6 +65,7 @@ def get_scoring(task_type: str) -> dict:
         return {
             "roc_auc":   "roc_auc",
             "f1":        "f1",
+            "f2":        make_scorer(fbeta_score, beta=2),
             "precision": "precision",
             "recall":    "recall",
             "avg_prec":  "average_precision",

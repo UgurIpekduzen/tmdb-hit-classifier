@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 from IPython.display import display
 from sklearn.metrics import (
     average_precision_score, roc_auc_score,
-    f1_score, precision_score, recall_score,
+    f1_score, fbeta_score, precision_score, recall_score,
     confusion_matrix, ConfusionMatrixDisplay,
     precision_recall_curve, roc_curve,
     classification_report,
@@ -17,7 +17,7 @@ from sklearn.metrics import (
 )
 
 _CV_KEY_MAP: dict[str, dict[str, str]] = {
-    "binary":     {"PR-AUC": "avg_prec", "ROC-AUC": "roc_auc", "F1": "f1",
+    "binary":     {"F2": "f2", "PR-AUC": "avg_prec", "ROC-AUC": "roc_auc", "F1": "f1",
                    "Precision": "precision", "Recall": "recall"},
     "multiclass": {"ROC-AUC": "roc_auc", "F1": "f1",
                    "Precision": "precision", "Recall": "recall"},
@@ -60,6 +60,7 @@ def evaluate_test(
     if task_type == "binary":
         y_pred_prob  = model.predict_proba(X_test)[:, 1]
         test_metrics = {
+            "F2"       : fbeta_score(y_test, y_pred, beta=2),
             "PR-AUC"   : average_precision_score(y_test, y_pred_prob),
             "ROC-AUC"  : roc_auc_score(y_test, y_pred_prob),
             "F1"       : f1_score(y_test, y_pred),

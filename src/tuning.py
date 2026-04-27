@@ -15,6 +15,7 @@ import numpy as np
 from lightgbm import LGBMClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import fbeta_score, make_scorer
 from sklearn.model_selection import cross_val_score, cross_validate
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
@@ -24,6 +25,7 @@ from src.modeling import MAIN_METRIC, RANDOM_STATE, get_cv
 _SKLEARN_SCORING = {
     "avg_prec": "average_precision",
     "f1":       "f1_macro",
+    "f2":       make_scorer(fbeta_score, beta=2),
     "rmse":     "neg_root_mean_squared_error",
     "mae":      "neg_mean_absolute_error",
     "r2":       "r2",
@@ -32,6 +34,7 @@ _SKLEARN_SCORING = {
 _DIRECTION = {
     "avg_prec": "maximize",
     "f1":       "maximize",
+    "f2":       "maximize",
     "rmse":     "minimize",
     "mae":      "minimize",
     "r2":       "maximize",
