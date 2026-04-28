@@ -210,7 +210,10 @@ def tune_model(model_name: str, X, y, task_type: str,
     gap_info = f"  |  max_gap: {max_gap}" if max_gap is not None else ""
     print(f"Optuna başlıyor — model: {model_name}  |  metrik: {main_metric}  |  trial: {n_trials}{gap_info}")
 
-    study = optuna.create_study(direction=direction)
+    study = optuna.create_study(
+        direction=direction,
+        sampler=optuna.samplers.TPESampler(seed=RANDOM_STATE),
+    )
     study.optimize(
         _build_objective(model_fn, X, y, task_type, max_gap=max_gap),
         n_trials=n_trials,
