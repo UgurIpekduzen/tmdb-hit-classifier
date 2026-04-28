@@ -1,12 +1,22 @@
 from __future__ import annotations
 
+import logging
+import warnings
 from datetime import datetime
 
+logging.getLogger("mlflow").setLevel(logging.ERROR)
+warnings.filterwarnings("ignore", module="mlflow")
+
 import mlflow
+import mlflow.lightgbm
+import mlflow.sklearn
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from IPython.display import display
+from lightgbm import LGBMClassifier
+from mlflow.tracking import MlflowClient
+from sklearn.pipeline import Pipeline
 from sklearn.metrics import (
     average_precision_score, roc_auc_score,
     f1_score, fbeta_score, precision_score, recall_score,
@@ -208,3 +218,89 @@ def evaluate_test(
     plt.show()
 
     return test_metrics
+
+
+def register_champion(
+    model,
+    test_score: float,
+    registry_name: str = "tmdb-hit-classifier",
+    metric_name: str = "test_f2",
+    feature_version: str = "",
+) -> str:
+    """
+    Modeli MLflow Model Registry'ye kaydeder ve champion karşılaştırması yapar.
+
+    Mevcut Production versiyonu varsa test_score ile karşılaştırır:
+    - Challenger > Champion  → Production'a terfi, eski Production → Archived
+    - Challenger ≤ Champion  → Staging'de bırakır
+
+    Parameters
+    ----------
+    model        : fit edilmiş sklearn-uyumlu model
+    test_score   : challenger'ın test metrik değeri (yüksek = iyi)
+    registry_name: MLflow Model Registry'deki model adı
+    metric_name  : karşılaştırma metriği (MLflow run'ında bu isimle loglanan)
+    feature_version: etiket için feature seti versiyonu
+
+    Returns
+    -------
+    stage : "Production" | "Staging"
+    """
+    client = MlflowClient()
+
+    # Mevcut Production şampiyonu var mı?
+    try:
+        prod_versions = client.get_latest_versions(registry_name, stages=["Production"])
+    except Exception:
+        prod_versions = []
+
+    champion_score = 0.0
+    if prod_versions:
+        try:
+            run = client.get_run(prod_versions[0].run_id)
+            champion_score = run.data.metrics.get(metric_name, 0.0)
+        except Exception:
+            pass
+
+    # Challenger modeli yeni bir run'a logla
+    run_name = f"registry_{datetime.now():%Y%m%d_%H%M}"
+    with mlflow.start_run(run_name=run_name) as run:
+        tags = {"stage": "registry", "registry_name": registry_name}
+        if feature_version:
+            tags["feature_version"] = feature_version
+        mlflow.set_tags(tags)
+        mlflow.log_metric(metric_name, test_score)
+
+        estimator = model[-1] if isinstance(model, Pipeline) else model
+        if isinstance(estimator, LGBMClassifier):
+            mlflow.lightgbm.log_model(estimator, "model")
+        else:
+            mlflow.sklearn.log_model(model, "model")
+
+        model_uri = f"runs:/{run.info.run_id}/model"
+
+    # Registry'ye kaydet (Staging)
+    mv = mlflow.register_model(model_uri, registry_name)
+    client.transition_model_version_stage(
+        name=registry_name, version=mv.version, stage="Staging"
+    )
+
+    # Champion karşılaştırması
+    if test_score > champion_score:
+        # Eski Production → Archived
+        for v in prod_versions:
+            client.transition_model_version_stage(
+                name=registry_name, version=v.version, stage="Archived"
+            )
+        # Challenger → Production
+        client.transition_model_version_stage(
+            name=registry_name, version=mv.version, stage="Production"
+        )
+        stage = "Production"
+        print(f"✓ Yeni şampiyon Production'a alındı  ({metric_name}: {test_score:.4f} > {champion_score:.4f})")
+    else:
+        stage = "Staging"
+        print(f"  Challenger Staging'de kaldı  ({metric_name}: {test_score:.4f} ≤ {champion_score:.4f})")
+
+    print(f"  Registry: {registry_name}  |  Version: {mv.version}  |  Stage: {stage}")
+    return stage
