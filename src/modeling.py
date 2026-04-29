@@ -26,7 +26,10 @@ try:
 except ImportError:
     _CatBoostClassifier = None
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import ConfusionMatrixDisplay, confusion_matrix, fbeta_score, make_scorer
+from sklearn.metrics import (
+    ConfusionMatrixDisplay, confusion_matrix, fbeta_score, make_scorer,
+    average_precision_score, roc_auc_score, f1_score, precision_score, recall_score,
+)
 from sklearn.model_selection import (
     KFold,
     StratifiedKFold,
@@ -97,6 +100,38 @@ def get_scoring(task_type: str) -> dict:
             "precision": "precision_samples",
             "recall":    "recall_samples",
         }
+
+
+def quick_val_metrics(model, X, y, threshold: float = 0.5) -> dict:
+    """
+    Leakage-free metrics on a held-out split — no MLflow logging.
+
+    Parameters
+    ----------
+    model     : fitted sklearn-compatible classifier with predict_proba
+    X         : feature matrix
+    y         : true binary labels
+    threshold : decision threshold (default 0.5)
+
+    Returns
+    -------
+    dict with keys: F2, PR-AUC, ROC-AUC, F1, Precision, Recall
+
+    Examples
+    --------
+    val_m = quick_val_metrics(best_model, X_val, y_val)
+    test_m = quick_val_metrics(best_model, X_test, y_test, threshold=OPTIMAL_THRESHOLD)
+    """
+    proba = model.predict_proba(X)[:, 1]
+    pred  = (proba >= threshold).astype(int)
+    return {
+        "F2":        fbeta_score(y, pred, beta=2, zero_division=0),
+        "PR-AUC":    average_precision_score(y, proba),
+        "ROC-AUC":   roc_auc_score(y, proba),
+        "F1":        f1_score(y, pred, zero_division=0),
+        "Precision": precision_score(y, pred, zero_division=0),
+        "Recall":    recall_score(y, pred, zero_division=0),
+    }
 
 
 def compute_cv_metrics(model, X, y, cv, task_type: str) -> tuple[dict, dict, dict]:

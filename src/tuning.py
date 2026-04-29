@@ -44,6 +44,43 @@ _DIRECTION = {
 _GAP_PENALTY_FACTOR = 4.0   # Her 0.01 aşım için skoru 0.04 düşür/artır
 
 
+def optimal_threshold_from_pr(
+    y_true,
+    y_prob,
+) -> tuple[float, float, float, float]:
+    """
+    Find the decision threshold that maximises F1 on the precision-recall curve.
+
+    Parameters
+    ----------
+    y_true : true binary labels
+    y_prob : predicted probabilities for the positive class
+
+    Returns
+    -------
+    (threshold, f1, precision, recall)
+
+    Examples
+    --------
+    thr, f1, prec, rec = optimal_threshold_from_pr(y_val, y_prob_val)
+    y_pred = (y_prob_test >= thr).astype(int)
+    """
+    from sklearn.metrics import precision_recall_curve
+    prec_arr, rec_arr, thresh_arr = precision_recall_curve(y_true, y_prob)
+    f1_arr = np.where(
+        (prec_arr + rec_arr) > 0,
+        2 * prec_arr * rec_arr / (prec_arr + rec_arr),
+        0.0,
+    )
+    best_idx = int(np.argmax(f1_arr[:-1]))
+    return (
+        float(thresh_arr[best_idx]),
+        float(f1_arr[best_idx]),
+        float(prec_arr[best_idx]),
+        float(rec_arr[best_idx]),
+    )
+
+
 # ── Yerleşik model factory'leri ────────────────────────────────────────────────
 
 def _lgbm_fn(ir: int) -> Callable:

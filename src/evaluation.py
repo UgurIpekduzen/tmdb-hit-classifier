@@ -16,15 +16,19 @@ import matplotlib.pyplot as plt
 from IPython.display import display
 from lightgbm import LGBMClassifier
 from mlflow.tracking import MlflowClient
+from sklearn.base import clone
 from sklearn.pipeline import Pipeline
+from sklearn.calibration import calibration_curve
 from sklearn.metrics import (
-    average_precision_score, roc_auc_score,
+    average_precision_score, brier_score_loss, roc_auc_score,
     f1_score, fbeta_score, precision_score, recall_score,
     confusion_matrix, ConfusionMatrixDisplay,
     precision_recall_curve, roc_curve,
     classification_report,
     mean_squared_error, mean_absolute_error, r2_score,
 )
+
+MIN_SIG = 0.065  # Bootstrap CI minimum anlamlı Δ eşiği (Bölüm 12)
 
 _CV_KEY_MAP: dict[str, dict[str, str]] = {
     "binary":     {"F2": "f2", "PR-AUC": "avg_prec", "ROC-AUC": "roc_auc", "F1": "f1",
@@ -304,3 +308,247 @@ def register_champion(
 
     print(f"  Registry: {registry_name}  |  Version: {mv.version}  |  Stage: {stage}")
     return stage
+
+
+def _bootstrap_f2_ci(
+    y_test,
+    y_pred,
+    n_boot: int = 1000,
+    seed: int = 42,
+) -> tuple[float, float]:
+    """Stratified bootstrap F2 %95 CI. Returns (low, high)."""
+    rng     = np.random.default_rng(seed)
+    y_test  = np.array(y_test)
+    y_pred  = np.array(y_pred)
+    pos_idx = np.where(y_test == 1)[0]
+    neg_idx = np.where(y_test == 0)[0]
+    scores  = []
+    for _ in range(n_boot):
+        idx = np.concatenate([
+            rng.choice(pos_idx, size=len(pos_idx), replace=True),
+            rng.choice(neg_idx, size=len(neg_idx), replace=True),
+        ])
+        yt, yd = y_test[idx], y_pred[idx]
+        if yt.sum() == 0 or yt.sum() == len(yt):
+            continue
+        scores.append(fbeta_score(yt, yd, beta=2, zero_division=0))
+    arr = np.array(scores)
+    return float(np.percentile(arr, 2.5)), float(np.percentile(arr, 97.5))
+
+
+def compare_feature_version(
+    version: str,
+    model,
+    X_train,
+    y_train,
+    X_val,
+    y_val,
+    X_test,
+    y_test,
+    threshold: float,
+    baseline_val_f2: float,
+    baseline_test_f2: float,
+    prev_cols: list[str] | None = None,
+    drop_cols: list[str] | None = None,
+    baseline_label: str = "prev",
+    min_sig: float = MIN_SIG,
+) -> tuple[float, float, list[str]]:
+    """
+    Clone model, optionally drop features, compare F2 vs baseline.
+
+    prev_cols + drop_cols → new_cols. Eğer ikisi de None ise X_train tüm
+    sütunlarla kullanılır (feature filtresi yok).
+
+    Returns
+    -------
+    val_f2, test_f2, new_cols
+    """
+    if prev_cols is not None:
+        drop = set(drop_cols or [])
+        new_cols = [c for c in prev_cols if c not in drop]
+        X_tr = X_train[new_cols]
+        X_vl = X_val[new_cols]
+        X_ts = X_test[new_cols]
+        dropped = [c for c in (drop_cols or []) if c in prev_cols]
+    else:
+        new_cols = list(X_train.columns)
+        X_tr, X_vl, X_ts = X_train, X_val, X_test
+        dropped = []
+
+    print(f"prev feature sayısı : {len(prev_cols) if prev_cols is not None else len(new_cols)}")
+    print(f"{version} feature sayısı: {len(new_cols)}")
+    if dropped:
+        print(f"Drop edilenler      : {', '.join(dropped)}")
+
+    clf = clone(model)
+    clf.fit(X_tr, y_train)
+
+    y_val_pred  = (clf.predict_proba(X_vl)[:, 1] >= threshold).astype(int)
+    val_f2      = float(fbeta_score(np.array(y_val), y_val_pred, beta=2))
+
+    y_test_pred = (clf.predict_proba(X_ts)[:, 1] >= threshold).astype(int)
+    test_f2     = float(fbeta_score(np.array(y_test), y_test_pred, beta=2))
+    ci_low, ci_high = _bootstrap_f2_ci(y_test, y_test_pred)
+
+    prev_n   = len(prev_cols) if prev_cols is not None else len(new_cols)
+    prev_lbl = f"{baseline_label} ({prev_n} feature)"
+    new_lbl  = f"{version} ({len(new_cols)} feature)"
+    hdr = f'{"Versiyon":<22s}  {"Val F2":>8s}  {"Test F2":>8s}  {"Δ Val":>8s}  {"Δ Test":>8s}  {"CI (test)":>22s}'
+    print(f"\n=== {version} Feature Karşılaştırması (LGBM, clone test) ===")
+    print(hdr)
+    print("-" * 86)
+    print(f'{prev_lbl:<22s}  {baseline_val_f2:>8.4f}  {baseline_test_f2:>8.4f}  {"−":>8s}  {"−":>8s}  {"−":>22s}')
+    print(f'{new_lbl:<22s}  {val_f2:>8.4f}  {test_f2:>8.4f}  '
+          f'{val_f2 - baseline_val_f2:>+8.4f}  {test_f2 - baseline_test_f2:>+8.4f}  '
+          f'[{ci_low:.4f}, {ci_high:.4f}]')
+
+    delta_val  = val_f2  - baseline_val_f2
+    delta_test = test_f2 - baseline_test_f2
+    sig        = abs(delta_test) >= min_sig
+
+    print("\n--- Karar ---")
+    if sig and delta_test > 0:
+        print(f"  Δ Test F2 = {delta_test:+.4f} ≥ +{min_sig}  →  ✓ ANLAMLI İYİLEŞME")
+        print(f"  → {version} kalıcı yapılabilir.")
+    elif sig and delta_test < 0:
+        print(f"  Δ Test F2 = {delta_test:+.4f} ≤ -{min_sig}  →  ✗ ANLAMLI BOZULMA — önceki versiyon korunur.")
+    else:
+        print(f"  Δ Test F2 = {delta_test:+.4f}  (|Δ| < {min_sig})  →  Gürültü sınırında.")
+        print(f"  Δ Val  F2 = {delta_val:+.4f}")
+        if dropped:
+            print(f"  → Drop edilen feature'lar modeli bozmadı; {version} kalıcı yapılabilir.")
+        else:
+            print(f"  → {version} mevcut versiyonla istatistiksel olarak eşdeğer.")
+
+    return val_f2, test_f2, new_cols
+
+
+def bootstrap_ci(
+    y_true,
+    y_prob,
+    y_pred=None,
+    threshold: float = 0.5,
+    metrics: list[str] | None = None,
+    n_boot: int = 1000,
+    ci_alpha: float = 0.05,
+    beta: int = 2,
+    seed: int = 42,
+    verbose: bool = True,
+) -> pd.DataFrame:
+    """
+    Stratified bootstrap confidence intervals for binary classification metrics.
+
+    Parameters
+    ----------
+    y_true    : true binary labels
+    y_prob    : predicted probabilities for the positive class
+    y_pred    : hard predictions; derived from threshold if None
+    threshold : decision threshold used when y_pred is None (default 0.5)
+    metrics   : subset of ["F2","PR-AUC","ROC-AUC","Precision","Recall"]; all if None
+    n_boot    : bootstrap iterations (default 1000)
+    ci_alpha  : two-sided alpha level (default 0.05 → 95% CI)
+    beta      : beta for F-beta score (default 2)
+    seed      : random seed for reproducibility
+
+    Returns
+    -------
+    DataFrame indexed by metric with columns: point, ci_low, ci_high, ci_width
+
+    Examples
+    --------
+    df_ci = bootstrap_ci(y_test, y_prob_test, threshold=OPTIMAL_THRESHOLD)
+    """
+    _fns = {
+        "F2":        lambda yt, yp, yd: fbeta_score(yt, yd, beta=beta, zero_division=0),
+        "PR-AUC":    lambda yt, yp, yd: average_precision_score(yt, yp),
+        "ROC-AUC":   lambda yt, yp, yd: roc_auc_score(yt, yp),
+        "Precision": lambda yt, yp, yd: precision_score(yt, yd, zero_division=0),
+        "Recall":    lambda yt, yp, yd: recall_score(yt, yd, zero_division=0),
+    }
+
+    if metrics is None:
+        metrics = list(_fns.keys())
+
+    y_true = np.array(y_true)
+    y_prob = np.array(y_prob)
+    y_pred = (y_prob >= threshold).astype(int) if y_pred is None else np.array(y_pred)
+
+    rng     = np.random.default_rng(seed)
+    pos_idx = np.where(y_true == 1)[0]
+    neg_idx = np.where(y_true == 0)[0]
+    scores  = {m: [] for m in metrics}
+
+    for _ in range(n_boot):
+        idx = np.concatenate([
+            rng.choice(pos_idx, size=len(pos_idx), replace=True),
+            rng.choice(neg_idx, size=len(neg_idx), replace=True),
+        ])
+        yt = y_true[idx]
+        if yt.sum() == 0 or yt.sum() == len(yt):
+            continue
+        yp, yd = y_prob[idx], y_pred[idx]
+        for m in metrics:
+            scores[m].append(_fns[m](yt, yp, yd))
+
+    lo_pct = 100 * ci_alpha / 2
+    hi_pct = 100 * (1 - ci_alpha / 2)
+    rows = []
+    for m in metrics:
+        arr = np.array(scores[m])
+        pt  = float(_fns[m](y_true, y_prob, y_pred))
+        lo  = float(np.percentile(arr, lo_pct))
+        hi  = float(np.percentile(arr, hi_pct))
+        rows.append({"metric": m, "point": round(pt, 4),
+                     "ci_low": round(lo, 4), "ci_high": round(hi, 4),
+                     "ci_width": round(hi - lo, 4)})
+
+    result = pd.DataFrame(rows).set_index("metric")
+    if verbose:
+        print(f"Bootstrap CI (n={len(y_true)}, B={n_boot}, {int((1-ci_alpha)*100)}% stratified)")
+        print(result.to_string())
+    return result
+
+
+def calibration_report(
+    splits: list[tuple],
+    model_name: str = "",
+    n_bins: int = 10,
+) -> None:
+    """
+    Plot calibration curves and Brier scores for one or more data splits.
+
+    Parameters
+    ----------
+    splits     : list of (split_name, y_true, y_prob) tuples
+    model_name : model identifier used in the plot title
+    n_bins     : number of calibration bins (default 10)
+
+    Examples
+    --------
+    calibration_report(
+        [("Val", y_val, y_prob_val), ("Test", y_test, y_prob_test)],
+        model_name="LightGBM",
+    )
+    """
+    n = len(splits)
+    fig, axes = plt.subplots(1, n, figsize=(6.5 * n, 5))
+    if n == 1:
+        axes = [axes]
+    title = f"Kalibrasyon Eğrisi — {model_name}" if model_name else "Kalibrasyon Eğrisi"
+    fig.suptitle(title, fontsize=13, fontweight="bold")
+
+    for ax, (split_name, y_true, y_prob) in zip(axes, splits):
+        frac_pos, mean_pred = calibration_curve(y_true, y_prob, n_bins=n_bins)
+        brier = brier_score_loss(y_true, y_prob)
+        label = f"{model_name}  (Brier={brier:.4f})" if model_name else f"Brier={brier:.4f}"
+        ax.plot(mean_pred, frac_pos, "s-", color="#2196F3", lw=2, label=label)
+        ax.plot([0, 1], [0, 1], "k--", alpha=0.5, label="Mükemmel Kalibrasyon")
+        ax.set(xlabel="Tahmin Edilen Olasılık", ylabel="Gerçek Hit Oranı",
+               title=f"Kalibrasyon Eğrisi — {split_name}")
+        ax.legend(fontsize=9)
+        ax.grid(True, alpha=0.3)
+        print(f"  {split_name}: Brier={brier:.4f}  "
+              f"(baseline={brier_score_loss(y_true, np.full(len(y_true), np.mean(y_true))):.4f})")
+
+    plt.tight_layout()
+    plt.show()
