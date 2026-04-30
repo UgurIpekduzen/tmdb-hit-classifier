@@ -8,7 +8,7 @@ BACKUP_DIR ?= mlflow_backups
 API_PORT   ?= 8000
 API_HOST   ?= 0.0.0.0
 
-.PHONY: help up-mlflow down-mlflow purge-mlflow restart-mlflow ps-mlflow logs-mlflow url-mlflow backup-mlflow restore-mlflow env-mlflow nuke-mlflow run-api run-api-dev up-api down-api up-all down-all
+.PHONY: help up-mlflow down-mlflow purge-mlflow restart-mlflow ps-mlflow logs-mlflow url-mlflow backup-mlflow restore-mlflow env-mlflow nuke-mlflow run-api run-api-dev up-api down-api up-all down-all run-ui
 
 help:
 	@echo "Hedefler:"
@@ -18,6 +18,7 @@ help:
 	@echo "  make down-api        : API container'ını durdurur"
 	@echo "  make run-api         : FastAPI inference servisini başlatır (production)"
 	@echo "  make run-api-dev     : FastAPI inference servisini --reload ile başlatır (geliştirme)"
+	@echo "  make run-ui          : Streamlit demo UI'ı başlatır"
 	@echo "  make up-mlflow       : MLflow servisini başlatır"
 	@echo "  make down-mlflow     : MLflow servisini durdurur"
 	@echo "  make purge-mlflow    : MLflow servisini durdurur ve volume'u siler"
@@ -95,3 +96,7 @@ run-api:
 
 run-api-dev:
 	PYTHONPATH=$(CURDIR) uvicorn app.api:app --host $(API_HOST) --port $(API_PORT) --reload
+
+run-ui:
+	PYTHONPATH=$(CURDIR) streamlit run app/ui.py
+
