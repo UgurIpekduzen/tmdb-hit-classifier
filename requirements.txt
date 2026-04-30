@@ -1,0 +1,23 @@
+# API & serving
+fastapi==0.135.1
+uvicorn[standard]==0.40.0
+pydantic==2.12.5
+
+# ML & model registry
+mlflow==3.11.1
+lightgbm==4.6.0
+scikit-learn==1.7.2
+xgboost==3.2.0
+catboost==1.2.10
+
+# Data
+pandas==2.2.2
+numpy==2.0.1
+scipy==1.15.3
+
+# Tuning
+optuna==4.8.0
+
+# UI
+streamlit==1.37.1
+requests==2.32.5
