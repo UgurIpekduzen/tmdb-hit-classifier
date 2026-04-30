@@ -3,6 +3,7 @@
 import logging
 import os
 from contextlib import asynccontextmanager
+from typing import Optional
 
 import mlflow.pyfunc
 import pandas as pd
@@ -15,6 +16,7 @@ from app.monitoring import (
     load_reference,
     prediction_drift,
 )
+from app.inference import transform_raw_movie
 
 logger = logging.getLogger(__name__)
 
@@ -297,3 +299,44 @@ def predict_batch(movies: list[MovieInput]):
         )
         for p in probas
     ])
+
+
+# ── Raw input schema ──────────────────────────────────────────────────────────
+
+class RawMovieInput(BaseModel):
+    """Human-friendly raw movie input. Features are derived automatically."""
+    title:                  str              = Field(default="", description="Film adı")
+    budget:                 float            = Field(default=0.0, ge=0, description="Prodüksiyon bütçesi (nominal USD)")
+    runtime:                float            = Field(default=0.0, ge=0, le=600, description="Süre (dakika)")
+    release_date:           str              = Field(default="2010-01-01", description="Vizyon tarihi (YYYY-MM-DD)")
+    genres:                 list[str]        = Field(default=[], description="Türler — örn. ['Action', 'Adventure']")
+    production_companies:   list[str]        = Field(default=[], description="Yapım şirketleri")
+    production_countries:   list[str]        = Field(default=[], description="Yapım ülkeleri — örn. ['US']")
+    belongs_to_collection:  bool             = Field(default=False, description="Franchise / seri parçası mı?")
+    homepage:               Optional[str]    = Field(default=None, description="Resmi web sitesi URL (yoksa boş bırakın)")
+    director:               str              = Field(default="", description="Yönetmen adı")
+    lead_actors:            list[str]        = Field(default=[], description="Başrol oyuncuları (en fazla 3 isim)")
+    keywords:               list[str]        = Field(default=[], description="Anahtar kelimeler — örn. ['sequel', 'independent film']")
+
+
+@app.post("/predict/raw", response_model=PredictResponse)
+def predict_raw(movie: RawMovieInput):
+    """
+    Accept raw, human-friendly movie data and derive the 26 model features automatically.
+
+    Handles CPI budget adjustment, genre/keyword encoding, major-studio detection,
+    season features, and historical ROI lookup from training data.
+    """
+    if _model is None:
+        raise HTTPException(status_code=503, detail="Model not loaded")
+    try:
+        df = transform_raw_movie(movie.model_dump())
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=f"Feature extraction failed: {exc}")
+    proba = _predict_proba(df)[0]
+    return PredictResponse(
+        probability=round(proba, 4),
+        hit=proba >= THRESHOLD,
+        threshold=THRESHOLD,
+        model_version=_model_version,
+    )
