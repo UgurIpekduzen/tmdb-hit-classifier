@@ -9,6 +9,8 @@ import pandas as pd
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.monitoring import drift_report, load_reference
+
 logger = logging.getLogger(__name__)
 
 REGISTRY_NAME = "tmdb-hit-classifier"
@@ -16,6 +18,7 @@ MLFLOW_URI    = os.getenv("MLFLOW_TRACKING_URI", "http://localhost:5000")
 MODEL_STAGE   = os.getenv("MODEL_STAGE", "Production")
 THRESHOLD       = float(os.getenv("PREDICT_THRESHOLD", "0.5"))
 MAX_BATCH_SIZE  = int(os.getenv("MAX_BATCH_SIZE", "500"))
+DATASET_PATH    = os.getenv("DATASET_PATH", "data/tmdb_model.csv")
 
 # "genre_Science Fiction" contains a space — kept as-is for DataFrame column alignment.
 FEATURES: list[str] = [
@@ -32,17 +35,23 @@ FEATURES: list[str] = [
 
 _model = None
 _model_version: str = "unknown"
+_reference: pd.DataFrame | None = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _model, _model_version
+    global _model, _model_version, _reference
     mlflow.set_tracking_uri(MLFLOW_URI)
     _model = mlflow.pyfunc.load_model(f"models:/{REGISTRY_NAME}/{MODEL_STAGE}")
     client = mlflow.tracking.MlflowClient()
     versions = client.get_latest_versions(REGISTRY_NAME, stages=[MODEL_STAGE])
     _model_version = versions[0].version if versions else "unknown"
     logger.info("Model loaded: %s v%s (%s)", REGISTRY_NAME, _model_version, MODEL_STAGE)
+    try:
+        _reference = load_reference(DATASET_PATH, FEATURES)
+        logger.info("Reference distribution loaded: %d rows", len(_reference))
+    except Exception as exc:
+        logger.warning("Could not load reference distribution: %s", exc)
     yield
 
 
@@ -135,6 +144,24 @@ class BatchPredictResponse(BaseModel):
     predictions: list[PredictResponse]
 
 
+class FeatureDriftRow(BaseModel):
+    feature: str
+    n_ref: int
+    n_prod: int
+    ks_stat: float | None
+    ks_pvalue: float | None
+    ks_drift: bool | None
+    psi: float | None
+    psi_level: str
+    drift: bool
+
+
+class DriftResponse(BaseModel):
+    n_features: int
+    n_drifted: int
+    features: list[FeatureDriftRow]
+
+
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 @app.get("/health")
@@ -152,6 +179,28 @@ def info():
         "n_features": len(FEATURES),
         "features":   FEATURES,
     }
+
+
+@app.post("/drift", response_model=DriftResponse)
+def drift(movies: list[MovieInput]):
+    """Compare a batch of recent requests against the training reference distribution."""
+    if _reference is None:
+        raise HTTPException(status_code=503, detail="Reference distribution not available")
+    if not movies:
+        raise HTTPException(status_code=422, detail="At least one sample required")
+    if len(movies) > MAX_BATCH_SIZE:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Batch size {len(movies)} exceeds limit of {MAX_BATCH_SIZE}",
+        )
+    prod_df = pd.concat([m.to_dataframe() for m in movies], ignore_index=True)
+    report  = drift_report(_reference, prod_df, FEATURES)
+    rows = [FeatureDriftRow(**r) for r in report.to_dict(orient="records")]
+    return DriftResponse(
+        n_features=len(rows),
+        n_drifted=sum(r.drift for r in rows),
+        features=rows,
+    )
 
 
 def _predict_proba(df: pd.DataFrame) -> list[float]:
