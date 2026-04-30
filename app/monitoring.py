@@ -1,4 +1,4 @@
-"""Feature drift monitoring — KS-test and PSI."""
+"""Feature drift monitoring — KS-test, PSI, drift direction, and prediction drift."""
 from __future__ import annotations
 
 import numpy as np
@@ -43,28 +43,59 @@ def _psi_level(psi: float) -> str:
     return "low"
 
 
+def compute_feature_importance(
+    predict_fn,
+    reference: pd.DataFrame,
+    features: list[str],
+) -> dict[str, float]:
+    """
+    Compute feature importance as |Spearman correlation| between each feature
+    and the model's predicted probabilities on the reference data.
+
+    Returns a dict of {feature: importance} normalized to [0, 1].
+    Model-agnostic — works with any callable that takes a DataFrame.
+    """
+    proba = np.array(predict_fn(reference[features]))
+    importance: dict[str, float] = {}
+    for feat in features:
+        corr, _ = stats.spearmanr(reference[feat], proba)
+        importance[feat] = abs(float(corr)) if not np.isnan(corr) else 0.0
+    max_val = max(importance.values()) or 1.0
+    return {k: round(v / max_val, 4) for k, v in importance.items()}
+
+
 def drift_report(
     reference: pd.DataFrame,
     production: pd.DataFrame,
     features: list[str],
     ks_alpha: float = KS_ALPHA,
     psi_bins: int = PSI_BINS,
+    feature_importance: dict[str, float] | None = None,
 ) -> pd.DataFrame:
     """
     Compute per-feature drift between reference and production DataFrames.
 
     Parameters
     ----------
-    reference  : reference distribution (e.g. training split)
-    production : incoming data to compare (e.g. recent API requests)
-    features   : feature columns to evaluate
-    ks_alpha   : significance level for KS drift flag (default 0.05)
-    psi_bins   : number of bins for continuous PSI (default 10)
+    reference          : reference distribution (e.g. training split)
+    production         : incoming data to compare (e.g. recent API requests)
+    features           : feature columns to evaluate
+    ks_alpha           : significance level for KS drift flag (default 0.05)
+    psi_bins           : number of bins for continuous PSI (default 10)
+    feature_importance : {feature: 0–1 normalized importance}; when provided,
+                         adds `importance` and `risk_score` (psi × importance)
+                         columns and sorts by risk_score instead of psi
 
     Returns
     -------
-    DataFrame sorted by PSI descending with columns:
-        feature, n_ref, n_prod, ks_stat, ks_pvalue, ks_drift, psi, psi_level, drift
+    DataFrame with columns:
+        feature, n_ref, n_prod,
+        mean_ref, mean_prod, mean_shift,
+        ks_stat, ks_pvalue, ks_drift,
+        psi, psi_level,
+        [importance, risk_score — if feature_importance provided],
+        drift
+    Sorted by risk_score (if importance given) or psi descending.
     """
     rows = []
     for feat in features:
@@ -76,6 +107,7 @@ def drift_report(
 
         if len(ref_vals) == 0 or len(prod_vals) == 0:
             rows.append({"feature": feat, "n_ref": len(ref_vals), "n_prod": len(prod_vals),
+                         "mean_ref": None, "mean_prod": None, "mean_shift": None,
                          "ks_stat": None, "ks_pvalue": None, "ks_drift": None,
                          "psi": None, "psi_level": "unknown", "drift": False})
             continue
@@ -83,26 +115,85 @@ def drift_report(
         ks_stat, ks_p = stats.ks_2samp(ref_vals, prod_vals)
 
         is_binary = set(np.unique(ref_vals)).issubset({0, 1, 0.0, 1.0})
-        psi = _psi_binary(ref_vals, prod_vals) if is_binary else _psi_continuous(ref_vals, prod_vals, psi_bins)
+        psi   = _psi_binary(ref_vals, prod_vals) if is_binary else _psi_continuous(ref_vals, prod_vals, psi_bins)
         level = _psi_level(psi)
 
+        mean_ref   = round(float(np.mean(ref_vals)),  4)
+        mean_prod  = round(float(np.mean(prod_vals)), 4)
+        mean_shift = round(mean_prod - mean_ref,       4)
+
         rows.append({
-            "feature":   feat,
-            "n_ref":     int(len(ref_vals)),
-            "n_prod":    int(len(prod_vals)),
-            "ks_stat":   round(float(ks_stat), 4),
-            "ks_pvalue": round(float(ks_p), 4),
-            "ks_drift":  bool(ks_p < ks_alpha),
-            "psi":       round(float(psi), 4) if not np.isnan(psi) else None,
-            "psi_level": level,
-            "drift":     level in ("medium", "high") or bool(ks_p < ks_alpha),
+            "feature":    feat,
+            "n_ref":      int(len(ref_vals)),
+            "n_prod":     int(len(prod_vals)),
+            "mean_ref":   mean_ref,
+            "mean_prod":  mean_prod,
+            "mean_shift": mean_shift,
+            "ks_stat":    round(float(ks_stat), 4),
+            "ks_pvalue":  round(float(ks_p), 4),
+            "ks_drift":   bool(ks_p < ks_alpha),
+            "psi":        round(float(psi), 4) if not np.isnan(psi) else None,
+            "psi_level":  level,
+            "drift":      level in ("medium", "high") or bool(ks_p < ks_alpha),
         })
 
-    return (
-        pd.DataFrame(rows)
-        .sort_values("psi", ascending=False, na_position="last")
-        .reset_index(drop=True)
-    )
+    df = pd.DataFrame(rows)
+
+    if feature_importance is not None:
+        df["importance"]  = df["feature"].map(feature_importance).fillna(0.0)
+        df["risk_score"]  = (df["psi"].fillna(0.0) * df["importance"]).round(4)
+        sort_col = "risk_score"
+    else:
+        sort_col = "psi"
+
+    return df.sort_values(sort_col, ascending=False, na_position="last").reset_index(drop=True)
+
+
+def prediction_drift(
+    ref_proba: np.ndarray,
+    prod_proba: np.ndarray,
+    ks_alpha: float = KS_ALPHA,
+    psi_bins: int = PSI_BINS,
+) -> dict:
+    """
+    Measure drift in model output probabilities between reference and production.
+
+    Parameters
+    ----------
+    ref_proba  : predicted probabilities on reference data (train split)
+    prod_proba : predicted probabilities on incoming production batch
+    ks_alpha   : significance level for KS drift flag
+    psi_bins   : bins for PSI computation
+
+    Returns
+    -------
+    dict with keys:
+        mean_ref, mean_prod, mean_shift,
+        pct_hit_ref, pct_hit_prod,
+        ks_stat, ks_pvalue, ks_drift,
+        psi, psi_level, drift
+    """
+    ref_proba  = np.asarray(ref_proba,  dtype=float)
+    prod_proba = np.asarray(prod_proba, dtype=float)
+
+    ks_stat, ks_p = stats.ks_2samp(ref_proba, prod_proba)
+    psi   = _psi_continuous(ref_proba, prod_proba, psi_bins)
+    level = _psi_level(psi)
+
+    threshold = 0.5
+    return {
+        "mean_ref":     round(float(np.mean(ref_proba)),  4),
+        "mean_prod":    round(float(np.mean(prod_proba)), 4),
+        "mean_shift":   round(float(np.mean(prod_proba) - np.mean(ref_proba)), 4),
+        "pct_hit_ref":  round(float(np.mean(ref_proba  >= threshold)), 4),
+        "pct_hit_prod": round(float(np.mean(prod_proba >= threshold)), 4),
+        "ks_stat":      round(float(ks_stat), 4),
+        "ks_pvalue":    round(float(ks_p), 4),
+        "ks_drift":     bool(ks_p < ks_alpha),
+        "psi":          round(float(psi), 4) if not np.isnan(psi) else None,
+        "psi_level":    level,
+        "drift":        level in ("medium", "high") or bool(ks_p < ks_alpha),
+    }
 
 
 def load_reference(

@@ -9,7 +9,12 @@ import pandas as pd
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.monitoring import drift_report, load_reference
+from app.monitoring import (
+    compute_feature_importance,
+    drift_report,
+    load_reference,
+    prediction_drift,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -33,14 +38,24 @@ FEATURES: list[str] = [
     "kw_independent_film", "kw_sequel",
 ]
 
+def _predict_proba_raw(df: pd.DataFrame) -> list[float]:
+    """Standalone predict helper usable before `app` is fully initialised."""
+    raw = _model.predict(df)
+    if hasattr(raw, "ndim") and raw.ndim == 2:
+        return raw[:, 1].tolist()
+    return [float(v) for v in raw]
+
+
 _model = None
 _model_version: str = "unknown"
 _reference: pd.DataFrame | None = None
+_ref_proba: list[float] | None = None
+_feature_importance: dict[str, float] | None = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _model, _model_version, _reference
+    global _model, _model_version, _reference, _ref_proba, _feature_importance
     mlflow.set_tracking_uri(MLFLOW_URI)
     _model = mlflow.pyfunc.load_model(f"models:/{REGISTRY_NAME}/{MODEL_STAGE}")
     client = mlflow.tracking.MlflowClient()
@@ -49,7 +64,13 @@ async def lifespan(app: FastAPI):
     logger.info("Model loaded: %s v%s (%s)", REGISTRY_NAME, _model_version, MODEL_STAGE)
     try:
         _reference = load_reference(DATASET_PATH, FEATURES)
-        logger.info("Reference distribution loaded: %d rows", len(_reference))
+        _ref_proba = _predict_proba_raw(_reference)
+        _feature_importance = compute_feature_importance(_predict_proba_raw, _reference, FEATURES)
+        logger.info(
+            "Reference loaded: %d rows | top feature: %s",
+            len(_reference),
+            max(_feature_importance, key=_feature_importance.get),
+        )
     except Exception as exc:
         logger.warning("Could not load reference distribution: %s", exc)
     yield
@@ -148,9 +169,28 @@ class FeatureDriftRow(BaseModel):
     feature: str
     n_ref: int
     n_prod: int
+    mean_ref: float | None
+    mean_prod: float | None
+    mean_shift: float | None
     ks_stat: float | None
     ks_pvalue: float | None
     ks_drift: bool | None
+    psi: float | None
+    psi_level: str
+    importance: float | None
+    risk_score: float | None
+    drift: bool
+
+
+class PredictionDrift(BaseModel):
+    mean_ref: float
+    mean_prod: float
+    mean_shift: float
+    pct_hit_ref: float
+    pct_hit_prod: float
+    ks_stat: float
+    ks_pvalue: float
+    ks_drift: bool
     psi: float | None
     psi_level: str
     drift: bool
@@ -159,7 +199,9 @@ class FeatureDriftRow(BaseModel):
 class DriftResponse(BaseModel):
     n_features: int
     n_drifted: int
+    n_high_risk: int
     features: list[FeatureDriftRow]
+    prediction_drift: PredictionDrift | None
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
@@ -183,7 +225,11 @@ def info():
 
 @app.post("/drift", response_model=DriftResponse)
 def drift(movies: list[MovieInput]):
-    """Compare a batch of recent requests against the training reference distribution."""
+    """
+    Compare a batch of recent requests against the training reference distribution.
+
+    Returns per-feature drift (with direction and risk score) and prediction drift.
+    """
     if _reference is None:
         raise HTTPException(status_code=503, detail="Reference distribution not available")
     if not movies:
@@ -193,23 +239,27 @@ def drift(movies: list[MovieInput]):
             status_code=422,
             detail=f"Batch size {len(movies)} exceeds limit of {MAX_BATCH_SIZE}",
         )
-    prod_df = pd.concat([m.to_dataframe() for m in movies], ignore_index=True)
-    report  = drift_report(_reference, prod_df, FEATURES)
-    rows = [FeatureDriftRow(**r) for r in report.to_dict(orient="records")]
+    import numpy as np
+    prod_df    = pd.concat([m.to_dataframe() for m in movies], ignore_index=True)
+    report     = drift_report(_reference, prod_df, FEATURES, feature_importance=_feature_importance)
+    rows       = [FeatureDriftRow(**r) for r in report.to_dict(orient="records")]
+    pred_drift = None
+    if _ref_proba is not None:
+        prod_proba = _predict_proba_raw(prod_df)
+        pred_drift = PredictionDrift(**prediction_drift(
+            np.array(_ref_proba), np.array(prod_proba)
+        ))
     return DriftResponse(
         n_features=len(rows),
         n_drifted=sum(r.drift for r in rows),
+        n_high_risk=sum(1 for r in rows if r.risk_score is not None and r.risk_score > 0.1),
         features=rows,
+        prediction_drift=pred_drift,
     )
 
 
 def _predict_proba(df: pd.DataFrame) -> list[float]:
-    raw = _model.predict(df)
-    # LightGBM pyfunc binary: 1D probability array
-    # sklearn pyfunc: may return 2D (n_samples, 2)
-    if hasattr(raw, "ndim") and raw.ndim == 2:
-        return raw[:, 1].tolist()
-    return [float(v) for v in raw]
+    return _predict_proba_raw(df)
 
 
 @app.post("/predict", response_model=PredictResponse)
