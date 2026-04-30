@@ -200,7 +200,7 @@ def load_reference(
     csv_path: str,
     features: list[str],
     year_col: str = "release_year",
-    train_cutoff: int = 2009,
+    train_cutoff: int = 2013,
 ) -> pd.DataFrame:
     """
     Load the training split from CSV as the reference distribution.
