@@ -5,11 +5,15 @@ PROJECT ?= tmdb-mlflow
 MLFLOW_SERVICE ?= mlflow
 MLFLOW_PORT ?= 5000
 BACKUP_DIR ?= mlflow_backups
+API_PORT   ?= 8000
+API_HOST   ?= 0.0.0.0
 
-.PHONY: help up-mlflow down-mlflow purge-mlflow restart-mlflow ps-mlflow logs-mlflow url-mlflow backup-mlflow restore-mlflow env-mlflow nuke-mlflow
+.PHONY: help up-mlflow down-mlflow purge-mlflow restart-mlflow ps-mlflow logs-mlflow url-mlflow backup-mlflow restore-mlflow env-mlflow nuke-mlflow run-api run-api-dev
 
 help:
 	@echo "Hedefler:"
+	@echo "  make run-api         : FastAPI inference servisini başlatır (production)"
+	@echo "  make run-api-dev     : FastAPI inference servisini --reload ile başlatır (geliştirme)"
 	@echo "  make up-mlflow       : MLflow servisini başlatır"
 	@echo "  make down-mlflow     : MLflow servisini durdurur"
 	@echo "  make purge-mlflow    : MLflow servisini durdurur ve volume'u siler"
@@ -69,3 +73,9 @@ env-mlflow:
 nuke-mlflow:
 	@echo "UYARI: Bu işlem MLflow container, volume ve tüm verileri siler."
 	@$(DC) -f $(COMPOSE_FILE) -p $(PROJECT) down -v --remove-orphans
+
+run-api:
+	PYTHONPATH=$(CURDIR) uvicorn app.api:app --host $(API_HOST) --port $(API_PORT)
+
+run-api-dev:
+	PYTHONPATH=$(CURDIR) uvicorn app.api:app --host $(API_HOST) --port $(API_PORT) --reload
