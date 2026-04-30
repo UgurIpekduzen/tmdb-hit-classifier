@@ -14,7 +14,8 @@ logger = logging.getLogger(__name__)
 REGISTRY_NAME = "tmdb-hit-classifier"
 MLFLOW_URI    = os.getenv("MLFLOW_TRACKING_URI", "http://localhost:5000")
 MODEL_STAGE   = os.getenv("MODEL_STAGE", "Production")
-THRESHOLD     = float(os.getenv("PREDICT_THRESHOLD", "0.5"))
+THRESHOLD       = float(os.getenv("PREDICT_THRESHOLD", "0.5"))
+MAX_BATCH_SIZE  = int(os.getenv("MAX_BATCH_SIZE", "500"))
 
 # "genre_Science Fiction" contains a space — kept as-is for DataFrame column alignment.
 FEATURES: list[str] = [
@@ -56,36 +57,66 @@ app = FastAPI(
 # ── Schemas ──────────────────────────────────────────────────────────────────
 
 class MovieInput(BaseModel):
-    """Input features for a single movie. Full validation added in ADVBK-88."""
-
     model_config = ConfigDict(populate_by_name=True)
 
-    budget_adjusted: float = 0.0
-    runtime: float = 0.0
-    num_companies: int = 1
-    is_major_studio: int = 0
-    is_us_production: int = 0
-    has_homepage: int = 0
-    num_genres: int = 1
-    is_franchise: int = 0
-    is_summer: int = 0
-    is_holiday: int = 0
-    director_film_count: int = 1
-    director_collab_count: int = 0
-    actor_hist_roi: float = 0.0
-    company_hist_roi: float = 0.0
-    monthly_franchise_density: float = 0.0
-    genre_Action: int = 0
-    genre_Adventure: int = 0
-    genre_Animation: int = 0
-    genre_Documentary: int = 0
-    genre_Drama: int = 0
-    genre_Family: int = 0
-    genre_Fantasy: int = 0
-    genre_Horror: int = 0
-    genre_science_fiction: int = Field(default=0, alias="genre_Science Fiction")
-    kw_independent_film: int = 0
-    kw_sequel: int = 0
+    budget_adjusted: float = Field(
+        default=0.0, ge=0,
+        description="CPI-adjusted production budget (USD, 2010 base year)")
+    runtime: float = Field(
+        default=0.0, ge=0, le=600,
+        description="Film runtime in minutes (0–600)")
+    num_companies: int = Field(
+        default=1, ge=0,
+        description="Number of production companies")
+    is_major_studio: int = Field(
+        default=0, ge=0, le=1,
+        description="1 if produced by a major studio (Warner, Universal, Disney, Sony, Paramount, Fox)")
+    is_us_production: int = Field(
+        default=0, ge=0, le=1,
+        description="1 if US production")
+    has_homepage: int = Field(
+        default=0, ge=0, le=1,
+        description="1 if the film has a dedicated website")
+    num_genres: int = Field(
+        default=1, ge=0, le=20,
+        description="Number of genres assigned to the film")
+    is_franchise: int = Field(
+        default=0, ge=0, le=1,
+        description="1 if part of a known franchise or series")
+    is_summer: int = Field(
+        default=0, ge=0, le=1,
+        description="1 if released in summer window (June–August)")
+    is_holiday: int = Field(
+        default=0, ge=0, le=1,
+        description="1 if released in holiday window (November–December)")
+    director_film_count: int = Field(
+        default=1, ge=0,
+        description="Number of feature films directed before this one")
+    director_collab_count: int = Field(
+        default=0, ge=0,
+        description="Number of unique cast/crew collaborations by the director")
+    actor_hist_roi: float = Field(
+        default=0.0, ge=0,
+        description="Lead actor historical ROI — log1p-transformed; 0 = no history")
+    company_hist_roi: float = Field(
+        default=0.0, ge=0,
+        description="Production company historical ROI — log1p-transformed; 0 = no history")
+    monthly_franchise_density: float = Field(
+        default=0.0, ge=0, le=1,
+        description="Fraction of franchise films among all releases in the same month (0–1)")
+    genre_Action: int = Field(default=0, ge=0, le=1, description="Genre: Action")
+    genre_Adventure: int = Field(default=0, ge=0, le=1, description="Genre: Adventure")
+    genre_Animation: int = Field(default=0, ge=0, le=1, description="Genre: Animation")
+    genre_Documentary: int = Field(default=0, ge=0, le=1, description="Genre: Documentary")
+    genre_Drama: int = Field(default=0, ge=0, le=1, description="Genre: Drama")
+    genre_Family: int = Field(default=0, ge=0, le=1, description="Genre: Family")
+    genre_Fantasy: int = Field(default=0, ge=0, le=1, description="Genre: Fantasy")
+    genre_Horror: int = Field(default=0, ge=0, le=1, description="Genre: Horror")
+    genre_science_fiction: int = Field(
+        default=0, ge=0, le=1,
+        alias="genre_Science Fiction", description="Genre: Science Fiction")
+    kw_independent_film: int = Field(default=0, ge=0, le=1, description="Keyword: independent film")
+    kw_sequel: int = Field(default=0, ge=0, le=1, description="Keyword: sequel")
 
     def to_dataframe(self) -> pd.DataFrame:
         d = self.model_dump(by_alias=False)
@@ -151,6 +182,11 @@ def predict_batch(movies: list[MovieInput]):
         raise HTTPException(status_code=503, detail="Model not loaded")
     if not movies:
         return BatchPredictResponse(predictions=[])
+    if len(movies) > MAX_BATCH_SIZE:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Batch size {len(movies)} exceeds limit of {MAX_BATCH_SIZE}",
+        )
     df = pd.concat([m.to_dataframe() for m in movies], ignore_index=True)
     probas = _predict_proba(df)
     return BatchPredictResponse(predictions=[
