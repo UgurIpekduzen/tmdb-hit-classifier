@@ -8,6 +8,7 @@ from collections import Counter
 
 import numpy as np
 import pandas as pd
+from scipy import stats
 from sklearn.preprocessing import MultiLabelBinarizer
 
 
@@ -317,6 +318,72 @@ def infer_schema(
 
     result = pd.DataFrame(rows)
     result.index = result.index + 1
+    return result
+
+
+# ── Feature selection ────────────────────────────────────────────────────────
+
+def univariate_screening(
+    df: pd.DataFrame,
+    features: list[str],
+    target: str,
+    alpha: float = 0.05,
+) -> pd.DataFrame:
+    """
+    Univariate significance screening with Bonferroni correction.
+
+    Uses chi-squared for binary/categorical features (≤ 10 unique values)
+    and Mann-Whitney U for continuous features.
+
+    Parameters
+    ----------
+    df       : DataFrame containing features and target
+    features : list of feature column names to test
+    target   : binary target column name
+    alpha    : family-wise alpha before Bonferroni correction (default 0.05)
+
+    Returns
+    -------
+    DataFrame sorted by p-value with columns:
+        feature, test, p_value, significant, pos_hit_rate
+
+    Examples
+    --------
+    screen = univariate_screening(df, FEATURES, 'hit')
+    candidates = screen[~screen['significant']]
+    """
+    bonferroni = alpha / len(features)
+    rows = []
+    for col in features:
+        hit  = df.loc[df[target] == 1, col].dropna()
+        miss = df.loc[df[target] == 0, col].dropna()
+
+        if df[col].nunique() <= 10:
+            ct = pd.crosstab(df[col], df[target])
+            _, p, _, _ = stats.chi2_contingency(ct)
+            test = 'chi2'
+        else:
+            _, p = stats.mannwhitneyu(hit, miss, alternative='two-sided')
+            test = 'mwu'
+
+        pos_rate = df.loc[df[col] > 0, target].mean() if df[col].nunique() > 10 \
+                   else df.loc[df[col] == 1, target].mean()
+
+        rows.append({
+            'feature':      col,
+            'test':         test,
+            'p_value':      p,
+            'significant':  p < bonferroni,
+            'pos_hit_rate': round(float(pos_rate), 3),
+        })
+
+    result = pd.DataFrame(rows).sort_values('p_value').reset_index(drop=True)
+    print(f"univariate_screening: {len(features)} feature, Bonferroni α={bonferroni:.5f}")
+    print(f"  Significant: {result['significant'].sum()} / {len(features)}")
+    n_fail = (~result['significant']).sum()
+    if n_fail:
+        fails = result.loc[~result['significant'], 'feature'].tolist()
+        print(f"  Bonferroni dışı: {', '.join(fails)}")
     return result
 
 

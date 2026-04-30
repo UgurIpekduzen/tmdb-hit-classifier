@@ -509,6 +509,103 @@ def bootstrap_ci(
     return result
 
 
+def feature_drop_test(
+    df: pd.DataFrame,
+    features: list[str],
+    drop: list[str],
+    target: str,
+    model,
+    mask_train,
+    mask_val,
+    mask_test,
+    n_boot: int = 1000,
+    sig_threshold: float = MIN_SIG,
+) -> tuple[pd.DataFrame, pd.DataFrame, str]:
+    """
+    Test whether dropping features causes a statistically significant F2 loss.
+
+    Trains two clones of model — one with all features, one without drop —
+    finds optimal PR-curve threshold on val, then compares Bootstrap CI on test.
+
+    Parameters
+    ----------
+    df            : full DataFrame (features + target)
+    features      : current feature list (baseline)
+    drop          : features to remove for the reduced model
+    target        : binary target column
+    model         : sklearn-compatible estimator (cloned, not mutated)
+    mask_train/val/test : boolean Series for temporal splits
+    n_boot        : bootstrap iterations (default 1000)
+    sig_threshold : minimum meaningful Δ (default MIN_SIG = 0.065)
+
+    Returns
+    -------
+    ci_base : bootstrap_ci DataFrame for baseline model
+    ci_drop : bootstrap_ci DataFrame for reduced model
+    decision: 'drop' | 'keep'
+
+    Examples
+    --------
+    from src.evaluation import feature_drop_test
+    ci_base, ci_drop, decision = feature_drop_test(
+        df, FEATURES, drop=['actor_hist_roi'], target='hit',
+        model=tuned_lgbm, mask_train=mask_train, mask_val=mask_val, mask_test=mask_test,
+    )
+    """
+    from src.tuning import optimal_threshold_from_pr
+
+    feat_drop = [f for f in features if f not in drop]
+    dropped   = [f for f in drop if f in features]
+
+    print(f"Baseline : {len(features)} feature")
+    print(f"Reduced  : {len(feat_drop)} feature  (drop: {', '.join(dropped)})")
+
+    y_tr = df.loc[mask_train, target]
+    y_vl = df.loc[mask_val,   target]
+    y_te = df.loc[mask_test,  target]
+
+    # ── Baseline ─────────────────────────────────────────────────────────────
+    clf_base = clone(model)
+    clf_base.fit(df.loc[mask_train, features], y_tr)
+    thr_base, *_ = optimal_threshold_from_pr(
+        y_vl, clf_base.predict_proba(df.loc[mask_val, features])[:, 1]
+    )
+    ci_base = bootstrap_ci(
+        y_te, clf_base.predict_proba(df.loc[mask_test, features])[:, 1],
+        threshold=thr_base, metrics=['F2', 'PR-AUC', 'ROC-AUC'],
+        n_boot=n_boot, verbose=False,
+    )
+
+    # ── Reduced ──────────────────────────────────────────────────────────────
+    clf_drop = clone(model)
+    clf_drop.fit(df.loc[mask_train, feat_drop], y_tr)
+    thr_drop, *_ = optimal_threshold_from_pr(
+        y_vl, clf_drop.predict_proba(df.loc[mask_val, feat_drop])[:, 1]
+    )
+    ci_drop = bootstrap_ci(
+        y_te, clf_drop.predict_proba(df.loc[mask_test, feat_drop])[:, 1],
+        threshold=thr_drop, metrics=['F2', 'PR-AUC', 'ROC-AUC'],
+        n_boot=n_boot, verbose=False,
+    )
+
+    # ── Report ───────────────────────────────────────────────────────────────
+    print(f'\n{"Metrik":<10} {"Baseline":>10} {"Reduced":>10} {"Δ":>8}  Anlamlı?')
+    print('-' * 50)
+    for m in ['F2', 'PR-AUC', 'ROC-AUC']:
+        base_v = ci_base.loc[m, 'point']
+        drop_v = ci_drop.loc[m, 'point']
+        delta  = drop_v - base_v
+        sig    = '⚠️ Anlamlı' if abs(delta) >= sig_threshold else 'Gürültü'
+        print(f'{m:<10} {base_v:>10.4f} {drop_v:>10.4f} {delta:>+8.4f}  {sig}')
+
+    delta_f2 = ci_drop.loc['F2', 'point'] - ci_base.loc['F2', 'point']
+    decision = 'drop' if abs(delta_f2) < sig_threshold else 'keep'
+    label    = 'DROP ✅' if decision == 'drop' else 'KORU ❌'
+    print(f'\nKarar: Δ F2 = {delta_f2:+.4f} — {label} (eşik={sig_threshold})')
+
+    return ci_base, ci_drop, decision
+
+
 def calibration_report(
     splits: list[tuple],
     model_name: str = "",
