@@ -8,10 +8,14 @@ BACKUP_DIR ?= mlflow_backups
 API_PORT   ?= 8000
 API_HOST   ?= 0.0.0.0
 
-.PHONY: help up-mlflow down-mlflow purge-mlflow restart-mlflow ps-mlflow logs-mlflow url-mlflow backup-mlflow restore-mlflow env-mlflow nuke-mlflow run-api run-api-dev
+.PHONY: help up-mlflow down-mlflow purge-mlflow restart-mlflow ps-mlflow logs-mlflow url-mlflow backup-mlflow restore-mlflow env-mlflow nuke-mlflow run-api run-api-dev up-api down-api up-all down-all
 
 help:
 	@echo "Hedefler:"
+	@echo "  make up-all          : MLflow + API servislerini birlikte başlatır"
+	@echo "  make down-all        : Tüm servisleri durdurur"
+	@echo "  make up-api          : Yalnızca API container'ını başlatır"
+	@echo "  make down-api        : API container'ını durdurur"
 	@echo "  make run-api         : FastAPI inference servisini başlatır (production)"
 	@echo "  make run-api-dev     : FastAPI inference servisini --reload ile başlatır (geliştirme)"
 	@echo "  make up-mlflow       : MLflow servisini başlatır"
@@ -73,6 +77,18 @@ env-mlflow:
 nuke-mlflow:
 	@echo "UYARI: Bu işlem MLflow container, volume ve tüm verileri siler."
 	@$(DC) -f $(COMPOSE_FILE) -p $(PROJECT) down -v --remove-orphans
+
+up-all:
+	$(DC) -f $(COMPOSE_FILE) -p $(PROJECT) up -d
+
+down-all:
+	$(DC) -f $(COMPOSE_FILE) -p $(PROJECT) down
+
+up-api:
+	$(DC) -f $(COMPOSE_FILE) -p $(PROJECT) up -d api
+
+down-api:
+	$(DC) -f $(COMPOSE_FILE) -p $(PROJECT) stop api
 
 run-api:
 	PYTHONPATH=$(CURDIR) uvicorn app.api:app --host $(API_HOST) --port $(API_PORT)

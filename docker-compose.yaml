@@ -26,5 +26,24 @@ services:
       timeout: 3s
       retries: 30
 
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      MODEL_STAGE: ${MODEL_STAGE:-Production}
+      DATASET_PATH: data/tmdb_model.csv
+      PREDICT_THRESHOLD: ${PREDICT_THRESHOLD:-0.5}
+    depends_on:
+      mlflow:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health').read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
 volumes:
   mlflow_data:
