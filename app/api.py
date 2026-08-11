@@ -23,6 +23,9 @@ logger = logging.getLogger(__name__)
 REGISTRY_NAME = "tmdb-hit-classifier"
 MLFLOW_URI    = os.getenv("MLFLOW_TRACKING_URI", "http://localhost:5000")
 MODEL_STAGE   = os.getenv("MODEL_STAGE", "Production")
+# Varsayılan: repoyla birlikte gelen bundled model (mlflow sunucusu gerektirmez).
+# MLflow registry'den yüklemek için MODEL_URI="models:/{REGISTRY_NAME}/{MODEL_STAGE}" set edin.
+MODEL_URI     = os.getenv("MODEL_URI", "models/production")
 THRESHOLD       = float(os.getenv("PREDICT_THRESHOLD", "0.5"))
 MAX_BATCH_SIZE  = int(os.getenv("MAX_BATCH_SIZE", "500"))
 DATASET_PATH    = os.getenv("DATASET_PATH", "data/tmdb_model.csv")
@@ -58,12 +61,17 @@ _feature_importance: dict[str, float] | None = None
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global _model, _model_version, _reference, _ref_proba, _feature_importance
-    mlflow.set_tracking_uri(MLFLOW_URI)
-    _model = mlflow.pyfunc.load_model(f"models:/{REGISTRY_NAME}/{MODEL_STAGE}")
-    client = mlflow.tracking.MlflowClient()
-    versions = client.get_latest_versions(REGISTRY_NAME, stages=[MODEL_STAGE])
-    _model_version = versions[0].version if versions else "unknown"
-    logger.info("Model loaded: %s v%s (%s)", REGISTRY_NAME, _model_version, MODEL_STAGE)
+    is_registry_uri = MODEL_URI.startswith(("models:/", "runs:/"))
+    if is_registry_uri:
+        mlflow.set_tracking_uri(MLFLOW_URI)
+    _model = mlflow.pyfunc.load_model(MODEL_URI)
+    if is_registry_uri:
+        client = mlflow.tracking.MlflowClient()
+        versions = client.get_latest_versions(REGISTRY_NAME, stages=[MODEL_STAGE])
+        _model_version = versions[0].version if versions else "unknown"
+    else:
+        _model_version = "bundled"
+    logger.info("Model loaded: %s (%s)", MODEL_URI, _model_version)
     try:
         _reference = load_reference(DATASET_PATH, FEATURES)
         _ref_proba = _predict_proba_raw(_reference)

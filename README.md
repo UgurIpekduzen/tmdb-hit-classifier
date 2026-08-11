@@ -126,9 +126,10 @@ task run-api-dev     # --reload ile, http://localhost:8000/docs
 task run-ui          # http://localhost:8501 — sidebar'dan API URL girilir
 ```
 
-Bunun için önce ayrıca bir MLflow sunucusu (`task up-mlflow` veya yerel
-`mlflow server`) ayakta olmalı — `run-api`/`run-api-dev`, `MLFLOW_TRACKING_URI`
-üzerinden modeli oradan yükler.
+`api`, varsayılan olarak repoyla birlikte gelen `models/production` modelini
+kullanır — ayrıca bir MLflow sunucusu gerekmez. MLflow registry'den yüklemek
+istersen `MODEL_URI=models:/tmdb-hit-classifier/Production` env değişkenini
+set et (bu durumda `task up-mlflow` ile bir sunucu ayakta olmalı).
 
 ### Notebookları çalıştır (opsiyonel — modeli sıfırdan eğitmek için)
 
@@ -148,8 +149,9 @@ hiçbir mlflow sunucusuna bağlanmadan da çalışır — bkz. [Ortam Değişken
 
 | Değişken | Varsayılan | Nerede | Açıklama |
 |----------|-----------|--------|----------|
-| `MLFLOW_TRACKING_URI` | `http://localhost:5000` | api, notebooklar | MLflow sunucu adresi |
-| `MODEL_STAGE` | `Production` | api | Yüklenecek model registry stage'i |
+| `MODEL_URI` | `models/production` | api | Yüklenecek model — bundled dizin yolu veya `models:/{name}/{stage}` (mlflow registry) |
+| `MLFLOW_TRACKING_URI` | `http://localhost:5000` | api, notebooklar | MLflow sunucu adresi (`MODEL_URI` registry URI'ye ayarlıysa kullanılır) |
+| `MODEL_STAGE` | `Production` | api | `MODEL_URI` registry URI'ye ayarlıysa yüklenecek stage |
 | `PREDICT_THRESHOLD` | `0.5` | api | Hit/miss karar eşiği |
 | `MAX_BATCH_SIZE` | `500` | api | `/predict/batch`, `/drift` maksimum satır |
 | `DATASET_PATH` | `data/tmdb_model.csv` | api | Drift referans veri seti yolu |
