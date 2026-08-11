@@ -25,10 +25,11 @@ Box-office hit tahmini için uçtan uca makine öğrenmesi projesi. TMDB 5000 fi
 
 ```
 .
-├── preprocess.ipynb      # Ham veri temizleme ve feature engineering
-├── eda.ipynb             # Keşifsel veri analizi
-├── example.ipynb         # Model eğitimi, tuning, değerlendirme (ana notebook)
-├── train.ipynb           # Referans çalıştırma (sadece okuma)
+├── notebooks/
+│   ├── preprocess.ipynb  # Ham veri temizleme ve feature engineering
+│   ├── eda.ipynb         # Keşifsel veri analizi
+│   ├── tuning.ipynb      # Baseline eğitimi + Optuna hiperparametre tuning
+│   └── modeling.ipynb    # Değerlendirme, hibrit modeller, SHAP, feature deneyleri (ana notebook)
 │
 ├── src/                  # Yeniden kullanılabilir modüller
 │   ├── modeling.py       # Model eğitimi ve SHAP analizi
@@ -75,9 +76,10 @@ make run-ui          # http://localhost:8501
 
 ```bash
 # Sırayla çalıştırın:
-jupyter notebook preprocess.ipynb
-jupyter notebook eda.ipynb
-jupyter notebook example.ipynb
+jupyter notebook notebooks/preprocess.ipynb
+jupyter notebook notebooks/eda.ipynb
+jupyter notebook notebooks/tuning.ipynb    # tuned_models'ı notebooks/artifacts/'a kaydeder
+jupyter notebook notebooks/modeling.ipynb  # tuning.ipynb'in çıktısını yükler, devam eder
 ```
 
 ---

@@ -217,6 +217,12 @@ __pycache__/
 # MLflow
 mlflow_backups/
 
+# SHAP çıktısı (yeniden üretilebilir, repoya eklenmez)
+shap_importance.png
+
+# tuning.ipynb → modeling.ipynb el sıkışma dosyası (yeniden üretilebilir, repoya eklenmez)
+notebooks/artifacts/
+
 # Claude
 .claude/
 CLAUDE.md
