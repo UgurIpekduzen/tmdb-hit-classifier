@@ -4,6 +4,8 @@ Box-office hit tahmini için uçtan uca makine öğrenmesi projesi. TMDB 5000 fi
 
 > **Hit tanımı:** CPI-düzeltmeli gelir (2010 bazlı) / prodüksiyon bütçesi ≥ 2×
 
+📊 [Final sunum (PDF)](assets/tmdb_hit_classifier_final.pdf)
+
 ![Streamlit UI — Film Hit Tahmini](assets/streamlit_ui.png)
 
 ---
