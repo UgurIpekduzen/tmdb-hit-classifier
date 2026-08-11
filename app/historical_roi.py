@@ -1,11 +1,12 @@
 """
-Pre-computed historical ROI snapshot tables for inference.
+Inference için önceden hesaplanmış tarihsel ROI anlık görüntü tabloları.
 
-At inference time we don't have access to the full temporal expanding window,
-so we use the latest smoothed ROI snapshot for each actor / director / company
-derived from the training dataset (tmdb_model.csv + cast/crew CSV files).
+Inference anında tam temporal genişleyen pencereye erişimimiz yok, bu yüzden
+her oyuncu / yönetmen / şirket için eğitim veri setinden (tmdb_model.csv +
+cast/crew CSV dosyaları) türetilmiş en güncel düzeltilmiş (smoothed) ROI
+anlık görüntüsünü kullanıyoruz.
 
-Smoothing matches training: additive smoothing K=5, global prior = mean ROI.
+Düzeltme (smoothing) eğitimle aynı: additive smoothing K=5, global prior = ortalama ROI.
 """
 
 import numpy as np
@@ -43,7 +44,7 @@ def _load_tables() -> None:
         raw = float(np.mean(values))
         return (n * raw + _SMOOTH_K * _global_prior) / (n + _SMOOTH_K)
 
-    # Actor snapshot
+    # Oyuncu anlık görüntüsü
     cast_top3 = cast_df[cast_df["cast_order"] < 3].copy()
     cast_top3["roi_capped"] = cast_top3["movie_id"].map(roi_capped)
     cast_top3 = cast_top3.dropna(subset=["roi_capped"])
@@ -52,7 +53,7 @@ def _load_tables() -> None:
         actor_rois.setdefault(row["name"], []).append(row["roi_capped"])
     _actor_table = {name: _smooth(vals) for name, vals in actor_rois.items()}
 
-    # Director snapshot
+    # Yönetmen anlık görüntüsü
     directors = crew_df[crew_df["job"] == "Director"].copy()
     directors["roi_capped"] = directors["movie_id"].map(roi_capped)
     directors = directors.dropna(subset=["roi_capped"])
@@ -61,7 +62,7 @@ def _load_tables() -> None:
         dir_rois.setdefault(row["name"], []).append(row["roi_capped"])
     _director_table = {name: _smooth(vals) for name, vals in dir_rois.items()}
 
-    # Company snapshot
+    # Şirket anlık görüntüsü
     companies_df["roi_capped"] = companies_df["movie_id"].map(roi_capped)
     companies_df = companies_df.dropna(subset=["roi_capped"])
     comp_rois: dict[str, list[float]] = {}
@@ -89,6 +90,7 @@ def get_director_film_count(name: str) -> int:
         _load_tables()
     crew_df = pd.read_csv(_DATA_DIR / "tmdb_crew_clean.csv")
     count = len(crew_df[(crew_df["job"] == "Director") & (crew_df["name"] == name)])
+    # -1: sorgulanan filmin kendisi de veri setinde geçiyorsa, "önceki film sayısı"na dahil etme
     return max(0, count - 1)
 
 
@@ -109,7 +111,7 @@ def get_company_roi(names: list[str]) -> float:
         _load_tables()
     vals = [_company_table[n] for n in names if n in _company_table]
     if not vals:
-        # Partial match fallback
+        # Tam eşleşme yoksa kısmi eşleşmeye düş
         for n in names:
             n_lower = n.lower()
             for key, val in _company_table.items():

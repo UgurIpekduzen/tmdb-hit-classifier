@@ -1,6 +1,6 @@
 """
-Generic preprocessing utilities for structured ML datasets.
-Designed to be reusable across ML projects.
+Yapılandırılmış ML veri setleri için genel amaçlı ön işleme yardımcıları.
+Farklı ML projelerinde yeniden kullanılabilir olacak şekilde tasarlanmıştır.
 """
 
 import ast
@@ -16,12 +16,12 @@ from sklearn.preprocessing import MultiLabelBinarizer
 
 def parse_json_list(json_str, key: str = "name") -> list:
     """
-    Extract a list of string values from a JSON array stored as a string.
+    String olarak saklanan bir JSON array'inden string değer listesi çıkarır.
 
     Parameters
     ----------
-    json_str : string representation of a JSON array of dicts
-    key      : dict key to extract from each item (default 'name')
+    json_str : dict'lerden oluşan bir JSON array'inin string temsili
+    key      : her öğeden çıkarılacak dict anahtarı (varsayılan 'name')
 
     Examples
     --------
@@ -39,12 +39,12 @@ def parse_json_list(json_str, key: str = "name") -> list:
 
 def parse_json_iso_codes(json_str, key: str = "iso_3166_1") -> list:
     """
-    Extract ISO codes from a JSON array stored as a string.
+    String olarak saklanan bir JSON array'inden ISO kodlarını çıkarır.
 
     Parameters
     ----------
-    json_str : string representation of a JSON array of dicts
-    key      : ISO code key (e.g. 'iso_3166_1' for countries, 'iso_639_1' for languages)
+    json_str : dict'lerden oluşan bir JSON array'inin string temsili
+    key      : ISO kod anahtarı (örn. ülkeler için 'iso_3166_1', diller için 'iso_639_1')
 
     Examples
     --------
@@ -61,17 +61,17 @@ def json_denormalize(
     field_map: dict,
 ) -> pd.DataFrame:
     """
-    Denormalize a JSON array column into a long-format DataFrame.
+    Bir JSON array sütununu long-format bir DataFrame'e denormalize eder.
 
     Parameters
     ----------
-    id_col    : parent table identifier column (e.g. 'movie_id')
-    json_col  : column containing JSON array strings
-    field_map : {output_col: json_key} mapping for fields to extract
+    id_col    : üst tablo tanımlayıcı sütunu (örn. 'movie_id')
+    json_col  : JSON array string'leri içeren sütun
+    field_map : çıkarılacak alanlar için {output_col: json_key} eşlemesi
 
     Returns
     -------
-    Long-format DataFrame with id_col + field_map keys as columns.
+    id_col + field_map anahtarlarını sütun olarak içeren long-format DataFrame.
 
     Examples
     --------
@@ -95,7 +95,7 @@ def json_denormalize(
     return pd.DataFrame(rows)
 
 
-# ── Categorical encoding ──────────────────────────────────────────────────────
+# ── Kategorik encoding ────────────────────────────────────────────────────────
 
 def multilabel_encode(
     df: pd.DataFrame,
@@ -104,19 +104,19 @@ def multilabel_encode(
     drop_original: bool = True,
 ) -> pd.DataFrame:
     """
-    Multi-label binary encoding for a column containing lists of labels.
+    Etiket listeleri içeren bir sütun için multi-label binary encoding.
 
-    Applies sklearn MultiLabelBinarizer and adds one binary column per label.
+    sklearn MultiLabelBinarizer uygular ve her etiket için bir binary sütun ekler.
 
     Parameters
     ----------
-    col            : column with list values (e.g. ['Action', 'Drama'])
-    prefix         : column name prefix (e.g. 'genre' → 'genre_Action')
-    drop_original  : drop the source column after encoding
+    col            : liste değerleri içeren sütun (örn. ['Action', 'Drama'])
+    prefix         : sütun adı öneki (örn. 'genre' → 'genre_Action')
+    drop_original  : encoding sonrası kaynak sütunu siler
 
     Returns
     -------
-    df with new binary columns appended (and original dropped if requested).
+    Yeni binary sütunlar eklenmiş df (istenirse orijinal sütun silinir).
 
     Examples
     --------
@@ -146,19 +146,18 @@ def topk_binary_encode(
     drop_original: bool = True,
 ) -> pd.DataFrame:
     """
-    Create binary (0/1) columns for the top-K most frequent labels in a
-    list-valued column.
+    Liste değerli bir sütundaki en sık geçen K etiket için binary (0/1) sütunlar oluşturur.
 
     Parameters
     ----------
-    col           : column with list values (e.g. ['sequel', 'based on novel'])
-    k             : number of top labels to keep
-    prefix        : column name prefix (e.g. 'kw' → 'kw_sequel')
-    drop_original : drop the source column after encoding
+    col           : liste değerleri içeren sütun (örn. ['sequel', 'based on novel'])
+    k             : tutulacak en sık etiket sayısı
+    prefix        : sütun adı öneki (örn. 'kw' → 'kw_sequel')
+    drop_original : encoding sonrası kaynak sütunu siler
 
     Returns
     -------
-    df with k new binary columns appended.
+    k yeni binary sütun eklenmiş df.
 
     Examples
     --------
@@ -186,7 +185,7 @@ def topk_binary_encode(
     return df
 
 
-# ── Schema inference ─────────────────────────────────────────────────────────
+# ── Şema çıkarımı ─────────────────────────────────────────────────────────────
 
 def infer_schema(
     df: pd.DataFrame,
@@ -194,35 +193,35 @@ def infer_schema(
     description_fn=None,
 ) -> pd.DataFrame:
     """
-    Infer measurement-level schema (Tür / Alt Tür) for each column from
-    dtype and basic statistics.
+    Her sütun için dtype ve temel istatistiklerden ölçüm seviyesi şemasını
+    (Tür / Alt Tür) çıkarır.
 
-    Inference rules
+    Çıkarım kuralları
     ---------------
     object / category → Kategorik / Nominal
     bool              → Kategorik / Nominal
     datetime          → Sayısal   / Aralık (Interval)
     numeric:
-      - name ends with '_id' or equals 'id' → Kategorik / Nominal
-      - binary (only 0 and 1)               → Kategorik / Nominal
-      - min >= 0                             → Sayısal   / Oran (Ratio)
-      - otherwise                            → Sayısal   / Aralık (Interval)
+      - adı '_id' ile bitiyor veya 'id'ye eşitse → Kategorik / Nominal
+      - binary (sadece 0 ve 1)                    → Kategorik / Nominal
+      - min >= 0                                   → Sayısal   / Oran (Ratio)
+      - aksi halde                                 → Sayısal   / Aralık (Interval)
 
     Parameters
     ----------
-    df             : DataFrame to inspect
+    df             : incelenecek DataFrame
     overrides      : {col: (tür, alt_tür, açıklama)}
-                     Use None for any field to keep the inferred value.
-                     Override descriptions always take priority over description_fn.
-                     Example: {"status": (None, "Ordinal", "Rumored < ... < Released")}
+                     Çıkarılan değeri korumak için herhangi bir alana None verin.
+                     Override açıklamaları her zaman description_fn'e göre önceliklidir.
+                     Örnek: {"status": (None, "Ordinal", "Rumored < ... < Released")}
     description_fn : Callable(col, dtype, stats) -> str | None
-                     Called for every column whose description is not set via overrides.
-                     Receives a stats dict with keys:
+                     Açıklaması overrides ile ayarlanmamış her sütun için çağrılır.
+                     Şu anahtarları içeren bir stats dict'i alır:
                        col, dtype, tür, alt_tür, n_unique, null_pct, min, max, sample
-                     Return a non-empty string to use as the description, or None / ""
-                     to leave it blank.
+                     Açıklama olarak kullanılacak boş olmayan bir string döndürün,
+                     boş bırakmak için None / "" döndürün.
 
-                     Example with Claude API::
+                     Claude API ile örnek::
 
                          import anthropic
                          client = anthropic.Anthropic()
@@ -246,8 +245,8 @@ def infer_schema(
 
     Returns
     -------
-    DataFrame with columns: Sütun, Tür, Alt Tür, Açıklama
-    Indexed from 1.
+    Sütunları: Sütun, Tür, Alt Tür, Açıklama olan DataFrame.
+    1'den başlayarak indekslenir.
 
     Examples
     --------
@@ -264,9 +263,9 @@ def infer_schema(
 
     for col in df.columns:
         dtype = df[col].dtype
-        kind  = dtype.kind  # b=bool, i/u/f=numeric, M=datetime, O=object, etc.
+        kind  = dtype.kind  # b=bool, i/u/f=numerik, M=datetime, O=object, vb.
 
-        # ── type inference ────────────────────────────────────────────────
+        # ── tip çıkarımı ───────────────────────────────────────────────────
         col_lower = col.lower()
         if kind == "b":
             tur, alt = "Kategorik", "Nominal"
@@ -288,7 +287,7 @@ def infer_schema(
         else:
             tur, alt = "?", "?"
 
-        # ── apply overrides ───────────────────────────────────────────────
+        # ── override'ları uygula ────────────────────────────────────────────
         desc = ""
         if col in overrides:
             ov_tur, ov_alt, ov_desc = overrides[col]
@@ -296,7 +295,7 @@ def infer_schema(
             if ov_alt  is not None: alt  = ov_alt
             if ov_desc is not None: desc = ov_desc
 
-        # ── description_fn (only when no override description) ────────────
+        # ── description_fn (yalnızca override açıklaması yoksa) ─────────────
         if not desc and description_fn is not None:
             s = df[col]
             stats = {
@@ -321,7 +320,7 @@ def infer_schema(
     return result
 
 
-# ── Feature selection ────────────────────────────────────────────────────────
+# ── Feature seçimi ────────────────────────────────────────────────────────────
 
 def univariate_screening(
     df: pd.DataFrame,
@@ -330,21 +329,21 @@ def univariate_screening(
     alpha: float = 0.05,
 ) -> pd.DataFrame:
     """
-    Univariate significance screening with Bonferroni correction.
+    Bonferroni düzeltmeli tek değişkenli anlamlılık taraması.
 
-    Uses chi-squared for binary/categorical features (≤ 10 unique values)
-    and Mann-Whitney U for continuous features.
+    Binary/kategorik feature'lar (≤ 10 benzersiz değer) için chi-squared,
+    sürekli feature'lar için Mann-Whitney U kullanır.
 
     Parameters
     ----------
-    df       : DataFrame containing features and target
-    features : list of feature column names to test
-    target   : binary target column name
-    alpha    : family-wise alpha before Bonferroni correction (default 0.05)
+    df       : feature'ları ve target'ı içeren DataFrame
+    features : test edilecek feature sütun adları listesi
+    target   : binary target sütun adı
+    alpha    : Bonferroni düzeltmesinden önceki family-wise alpha (varsayılan 0.05)
 
     Returns
     -------
-    DataFrame sorted by p-value with columns:
+    p-value'ya göre sıralı, şu sütunlara sahip DataFrame:
         feature, test, p_value, significant, pos_hit_rate
 
     Examples
@@ -387,7 +386,7 @@ def univariate_screening(
     return result
 
 
-# ── Outlier handling ──────────────────────────────────────────────────────────
+# ── Aykırı değer işleme ───────────────────────────────────────────────────────
 
 def winsorize(
     df: pd.DataFrame,
@@ -396,17 +395,17 @@ def winsorize(
     hi: float = 0.99,
 ) -> pd.DataFrame:
     """
-    Clip each column at the given percentile bounds (winsorization).
+    Her sütunu verilen percentile sınırlarında kırpar (winsorization).
 
     Parameters
     ----------
-    cols : columns to winsorize
-    lo   : lower percentile (default 0.01 = 1st percentile)
-    hi   : upper percentile (default 0.99 = 99th percentile)
+    cols : winsorize edilecek sütunlar
+    lo   : alt percentile (varsayılan 0.01 = 1. percentile)
+    hi   : üst percentile (varsayılan 0.99 = 99. percentile)
 
     Returns
     -------
-    df with clipped columns (in-place modification on copies).
+    Kırpılmış sütunlara sahip df (kopyalar üzerinde in-place değişiklik).
     """
     report = []
     for col in cols:

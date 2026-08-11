@@ -1,4 +1,4 @@
-"""Feature drift monitoring — KS-test, PSI, drift direction, and prediction drift."""
+"""Feature drift izleme — KS-testi, PSI, drift yönü ve tahmin drift'i."""
 from __future__ import annotations
 
 import numpy as np
@@ -8,7 +8,7 @@ from scipy import stats
 PSI_BINS = 10
 KS_ALPHA = 0.05
 
-# PSI thresholds (descending order for first-match lookup)
+# PSI eşikleri (azalan sırada — ilk eşleşme aranır)
 _PSI_LEVELS: list[tuple[float, str]] = [(0.25, "high"), (0.1, "medium"), (0.0, "low")]
 
 
@@ -49,11 +49,11 @@ def compute_feature_importance(
     features: list[str],
 ) -> dict[str, float]:
     """
-    Compute feature importance as |Spearman correlation| between each feature
-    and the model's predicted probabilities on the reference data.
+    Her feature ile modelin referans veri üzerindeki tahmin olasılıkları arasındaki
+    |Spearman korelasyonu| olarak feature importance hesaplar.
 
-    Returns a dict of {feature: importance} normalized to [0, 1].
-    Model-agnostic — works with any callable that takes a DataFrame.
+    [0, 1] aralığına normalize edilmiş {feature: importance} dict'i döndürür.
+    Model-agnostik — DataFrame kabul eden herhangi bir callable ile çalışır.
     """
     proba = np.array(predict_fn(reference[features]))
     importance: dict[str, float] = {}
@@ -73,29 +73,29 @@ def drift_report(
     feature_importance: dict[str, float] | None = None,
 ) -> pd.DataFrame:
     """
-    Compute per-feature drift between reference and production DataFrames.
+    Referans ve production DataFrame'leri arasında feature bazlı drift hesaplar.
 
-    Parameters
+    Parametreler
     ----------
-    reference          : reference distribution (e.g. training split)
-    production         : incoming data to compare (e.g. recent API requests)
-    features           : feature columns to evaluate
-    ks_alpha           : significance level for KS drift flag (default 0.05)
-    psi_bins           : number of bins for continuous PSI (default 10)
-    feature_importance : {feature: 0–1 normalized importance}; when provided,
-                         adds `importance` and `risk_score` (psi × importance)
-                         columns and sorts by risk_score instead of psi
+    reference          : referans dağılım (örn. eğitim split'i)
+    production         : karşılaştırılacak gelen veri (örn. yakın zamandaki API istekleri)
+    features           : değerlendirilecek feature sütunları
+    ks_alpha           : KS drift bayrağı için anlamlılık seviyesi (varsayılan 0.05)
+    psi_bins           : sürekli PSI için bin sayısı (varsayılan 10)
+    feature_importance : {feature: 0–1 normalize edilmiş importance}; verilirse
+                         `importance` ve `risk_score` (psi × importance) sütunları
+                         eklenir, psi yerine risk_score'a göre sıralanır
 
     Returns
     -------
-    DataFrame with columns:
+    Şu sütunlara sahip DataFrame:
         feature, n_ref, n_prod,
         mean_ref, mean_prod, mean_shift,
         ks_stat, ks_pvalue, ks_drift,
         psi, psi_level,
-        [importance, risk_score — if feature_importance provided],
+        [importance, risk_score — feature_importance verildiyse],
         drift
-    Sorted by risk_score (if importance given) or psi descending.
+    risk_score'a (importance verildiyse) veya psi'ye göre azalan sıralı.
     """
     rows = []
     for feat in features:
@@ -156,18 +156,18 @@ def prediction_drift(
     psi_bins: int = PSI_BINS,
 ) -> dict:
     """
-    Measure drift in model output probabilities between reference and production.
+    Referans ve production arasında model çıktı olasılıklarındaki drift'i ölçer.
 
-    Parameters
+    Parametreler
     ----------
-    ref_proba  : predicted probabilities on reference data (train split)
-    prod_proba : predicted probabilities on incoming production batch
-    ks_alpha   : significance level for KS drift flag
-    psi_bins   : bins for PSI computation
+    ref_proba  : referans veride (train split) tahmin edilen olasılıklar
+    prod_proba : gelen production batch'inde tahmin edilen olasılıklar
+    ks_alpha   : KS drift bayrağı için anlamlılık seviyesi
+    psi_bins   : PSI hesaplaması için bin sayısı
 
     Returns
     -------
-    dict with keys:
+    Şu anahtarlara sahip dict:
         mean_ref, mean_prod, mean_shift,
         pct_hit_ref, pct_hit_prod,
         ks_stat, ks_pvalue, ks_drift,
@@ -203,14 +203,14 @@ def load_reference(
     train_cutoff: int = 2013,
 ) -> pd.DataFrame:
     """
-    Load the training split from CSV as the reference distribution.
+    CSV'den eğitim split'ini referans dağılım olarak yükler.
 
-    Parameters
+    Parametreler
     ----------
-    csv_path     : path to tmdb_model.csv
-    features     : feature columns to retain
-    year_col     : temporal split column (default 'release_year')
-    train_cutoff : inclusive upper bound for training years (default 2009)
+    csv_path     : tmdb_model.csv'nin yolu
+    features     : korunacak feature sütunları
+    year_col     : temporal split sütunu (varsayılan 'release_year')
+    train_cutoff : eğitim yılları için üst sınır (dahil, varsayılan 2013)
     """
     df = pd.read_csv(csv_path)
     if year_col in df.columns:

@@ -1,6 +1,6 @@
 """
-Generic ensemble utilities for sklearn-compatible pipelines.
-Designed to be reusable across ML projects.
+sklearn-uyumlu pipeline'lar için genel amaçlı ensemble yardımcıları.
+Farklı ML projelerinde yeniden kullanılabilir olacak şekilde tasarlanmıştır.
 """
 
 from __future__ import annotations
@@ -11,24 +11,24 @@ from sklearn.model_selection import train_test_split
 
 class BlendingEnsemble:
     """
-    Holdout blending ensemble for binary classification.
+    Binary sınıflandırma için holdout blending ensemble.
 
-    Strategy:
-      1. X_train is split into blend_train (1 - blend_ratio) + holdout (blend_ratio).
-      2. Base models are trained on blend_train only.
-      3. Holdout predict_proba outputs form the meta-feature matrix.
-      4. The meta-model is trained on that matrix.
-      5. At inference: base models score X → meta-model combines probabilities.
+    Strateji:
+      1. X_train, blend_train (1 - blend_ratio) + holdout (blend_ratio) olarak bölünür.
+      2. Base modeller sadece blend_train üzerinde eğitilir.
+      3. Holdout predict_proba çıktıları meta-feature matrisini oluşturur.
+      4. Meta-model bu matris üzerinde eğitilir.
+      5. Inference'da: base modeller X'i skorlar → meta-model olasılıkları birleştirir.
 
-    Unlike CV-stacking, there is no cross-validation loop — leakage is prevented
-    by using a dedicated holdout set that the base models never see.
+    CV-stacking'den farklı olarak cross-validation döngüsü yoktur — leakage,
+    base modellerin hiç görmediği ayrı bir holdout set kullanılarak önlenir.
 
     Parameters
     ----------
-    base_models  : list of (name, estimator) tuples
-    meta_model   : sklearn-compatible classifier for the second layer
-    blend_ratio  : fraction of training data reserved for the holdout (default 0.2)
-    random_state : reproducibility seed
+    base_models  : (name, estimator) tuple'larından oluşan liste
+    meta_model   : ikinci katman için sklearn-uyumlu sınıflandırıcı
+    blend_ratio  : holdout için ayrılan eğitim verisi oranı (varsayılan 0.2)
+    random_state : tekrarlanabilirlik seed'i
 
     Examples
     --------

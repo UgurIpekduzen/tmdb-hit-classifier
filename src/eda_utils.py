@@ -1,20 +1,19 @@
 """
-Generic EDA utilities for feature screening and quality assessment.
-Designed to be reusable across ML projects.
+Feature tarama ve kalite değerlendirmesi için genel amaçlı EDA yardımcıları.
+Farklı ML projelerinde yeniden kullanılabilir olacak şekilde tasarlanmıştır.
 """
 
 import numpy as np
 import pandas as pd
-from scipy.stats import mannwhitneyu, chi2_contingency
 
 
 def coverage_report(df: pd.DataFrame, features: list[str] | None = None) -> pd.DataFrame:
     """
-    For each feature: non-null %, non-zero % (numeric), unique count.
+    Her feature için: non-null %, non-zero % (numerik), benzersiz değer sayısı.
 
     Returns
     -------
-    DataFrame sorted by non_null_pct ascending (worst coverage first).
+    non_null_pct'e göre artan sıralı DataFrame (en kötü kapsama önce).
     """
     if features is None:
         features = df.columns.tolist()
@@ -44,16 +43,16 @@ def find_constant_features(
     threshold: float = 0.97,
 ) -> pd.DataFrame:
     """
-    Detect features where a single value dominates >= threshold of rows.
+    Tek bir değerin satırların >= threshold kadarına hakim olduğu feature'ları tespit eder.
 
     Parameters
     ----------
-    threshold : dominant value frequency to flag as constant (default 0.97 = 97%)
+    threshold : sabit olarak işaretlenecek baskın değer frekansı (varsayılan 0.97 = %97)
 
     Returns
     -------
-    DataFrame with all features, sorted by dominant_pct descending.
-    Flagged features have constant=True.
+    dominant_pct'e göre azalan sıralı, tüm feature'ları içeren DataFrame.
+    İşaretlenen feature'larda constant=True olur.
     """
     if features is None:
         features = df.columns.tolist()
@@ -85,70 +84,6 @@ def find_constant_features(
     return result
 
 
-def univariate_screening(
-    df: pd.DataFrame,
-    features: list[str],
-    target: str,
-    alpha: float = 0.05,
-    binary_max_unique: int = 10,
-) -> pd.DataFrame:
-    """
-    Mann-Whitney U (continuous) or chi-square (binary/categorical) for each
-    feature vs target. Applies Bonferroni correction.
-
-    Parameters
-    ----------
-    binary_max_unique : features with <= this many unique int values use chi-square.
-
-    Returns
-    -------
-    DataFrame sorted by p ascending (strongest signal first).
-    Columns: test, statistic, p, p_bonferroni, significant.
-    """
-    rows = []
-    for col in features:
-        if col not in df.columns:
-            continue
-        s = df[col].dropna()
-        t = df.loc[s.index, target]
-
-        is_binary = (
-            s.nunique() <= 2
-            or (pd.api.types.is_integer_dtype(s) and s.nunique() <= binary_max_unique)
-        )
-
-        if is_binary:
-            ct = pd.crosstab(s, t)
-            if ct.shape[0] < 2 or ct.shape[1] < 2:
-                rows.append({"feature": col, "test": "chi2", "statistic": None, "p": None})
-                continue
-            chi2, p, _, _ = chi2_contingency(ct)
-            rows.append({"feature": col, "test": "chi2", "statistic": round(chi2, 3), "p": p})
-        else:
-            pos = s[t == 1]
-            neg = s[t == 0]
-            if len(pos) == 0 or len(neg) == 0:
-                rows.append({"feature": col, "test": "mwu", "statistic": None, "p": None})
-                continue
-            stat, p = mannwhitneyu(pos, neg, alternative="two-sided")
-            rows.append({"feature": col, "test": "mwu", "statistic": round(stat, 1), "p": p})
-
-    result = pd.DataFrame(rows).set_index("feature")
-    n_tests = int(result["p"].notna().sum())
-    result["p_bonferroni"] = (result["p"] * n_tests).clip(upper=1.0)
-    result["significant"] = result["p_bonferroni"] < alpha
-
-    result["p"]            = result["p"].round(4)
-    result["p_bonferroni"] = result["p_bonferroni"].round(4)
-
-    bonf_threshold = alpha / n_tests if n_tests else alpha
-    n_sig = int(result["significant"].sum())
-    print(f"Bonferroni eşiği: p < {bonf_threshold:.4f}  ({n_tests} test)")
-    print(f"Anlamlı feature: {n_sig} / {len(result)}")
-
-    return result.sort_values("p")
-
-
 def temporal_entity_agg(
     df: pd.DataFrame,
     entity_col: str,
@@ -159,40 +94,40 @@ def temporal_entity_agg(
     global_prior: float = None,
 ) -> pd.Series:
     """
-    Leakage-safe expanding window aggregation per entity.
+    Entity bazında leakage'a karşı güvenli expanding window agregasyonu.
 
-    For each row, aggregates value_col for that entity using ONLY rows that
-    appear before it. If the DataFrame is not pre-sorted, pass date_col.
+    Her satır için, value_col'u o entity'nin SADECE ondan önce görünen satırlarını
+    kullanarak agrega eder. DataFrame önceden sıralı değilse date_col verin.
 
-    Aggregation modes (agg parameter):
-        'mean'  — expanding mean; supports hierarchical smoothing via smooth_k
-        'count' — number of prior occurrences of the entity (value_col ignored)
-        'sum'   — expanding sum
+    Agregasyon modları (agg parametresi):
+        'mean'  — expanding ortalama; smooth_k ile hiyerarşik düzeltmeyi destekler
+        'count' — entity'nin önceki görülme sayısı (value_col dikkate alınmaz)
+        'sum'   — expanding toplam
 
-    Hierarchical smoothing (agg='mean', smooth_k > 0):
+    Hiyerarşik düzeltme (agg='mean', smooth_k > 0):
         smoothed = (n * raw_mean + K * global_prior) / (n + K)
 
     Parameters
     ----------
-    entity_col   : column identifying the entity (e.g. director, user_id)
-    value_col    : column to aggregate (e.g. roi, revenue, is_default)
-    date_col     : if provided, df is sorted by this column before aggregation
+    entity_col   : entity'yi belirleyen sütun (örn. yönetmen, user_id)
+    value_col    : agrega edilecek sütun (örn. roi, revenue, is_default)
+    date_col     : verilirse, agregasyondan önce df bu sütuna göre sıralanır
     agg          : 'mean' | 'count' | 'sum'
-    smooth_k     : smoothing strength for agg='mean'; 0 = no smoothing
-    global_prior : prior mean for smoothing; computed from value_col if None
+    smooth_k     : agg='mean' için düzeltme gücü; 0 = düzeltme yok
+    global_prior : düzeltme için prior ortalama; None ise value_col'dan hesaplanır
 
     Returns
     -------
-    pd.Series aligned to df.index.
+    df.index ile hizalı pd.Series.
 
     Examples
     --------
-    # Director film count
+    # Yönetmen film sayısı
     df["director_film_count"] = temporal_entity_agg(
         df, "director", "id", date_col="release_date", agg="count"
     )
 
-    # Actor smoothed ROI (shrink sparse entities towards global mean)
+    # Oyuncu düzeltilmiş ROI (seyrek entity'leri global ortalamaya doğru büzer)
     df["actor_hist_roi"] = temporal_entity_agg(
         df, "actor_id", "roi_capped", date_col="release_date",
         agg="mean", smooth_k=5,
@@ -222,7 +157,7 @@ def temporal_entity_agg(
             val = float(n)
         elif agg == "sum":
             val = float(sum(hist)) if n > 0 else 0.0
-        else:  # mean
+        else:  # ortalama
             if n == 0:
                 val = global_prior if smooth_k > 0 else 0.0
             else:

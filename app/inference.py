@@ -1,8 +1,8 @@
 """
-Raw TMDB movie dict → 26 model features.
+Ham TMDB film dict'i → 26 model feature'ı.
 
-Replicates the preprocessing pipeline from preprocess.ipynb / eda.ipynb
-so that /predict/raw can accept human-friendly inputs.
+/predict/raw'ın kullanıcı dostu girdiler kabul edebilmesi için
+preprocess.ipynb / eda.ipynb'deki ön işleme pipeline'ını yeniden üretir.
 """
 
 from __future__ import annotations
@@ -83,7 +83,7 @@ def _is_major_studio(companies: list[str]) -> int:
 
 
 def _monthly_franchise_density(release_date: date, is_franchise: int) -> float:
-    """Approximate from training data: fraction of franchise films in same month."""
+    """Eğitim verisinden yaklaşık değer: aynı aydaki franchise filmlerinin oranı."""
     try:
         df = pd.read_csv(_DATA_DIR / "tmdb_model.csv")
         same_month = df[
@@ -99,22 +99,22 @@ def _monthly_franchise_density(release_date: date, is_franchise: int) -> float:
 
 def transform_raw_movie(raw: dict) -> pd.DataFrame:
     """
-    Transform a raw movie dict into a single-row DataFrame with the 26 model features.
+    Ham bir film dict'ini 26 model feature'ına sahip tek satırlık DataFrame'e dönüştürür.
 
-    Expected keys:
-        budget          : float  — production budget in USD (nominal)
-        runtime         : float  — runtime in minutes
-        release_date    : str    — "YYYY-MM-DD" or "YYYY"
-        genres          : list[str]  — e.g. ["Action", "Adventure"]
+    Beklenen anahtarlar:
+        budget          : float  — prodüksiyon bütçesi, USD (nominal)
+        runtime         : float  — süre, dakika
+        release_date    : str    — "YYYY-MM-DD" veya "YYYY"
+        genres          : list[str]  — örn. ["Action", "Adventure"]
         production_companies : list[str]
-        production_countries : list[str]  — e.g. ["US"] or ["United States of America"]
+        production_countries : list[str]  — örn. ["US"] veya ["United States of America"]
         belongs_to_collection: bool | int
         homepage        : str | None
-        director        : str    — director name
-        lead_actors     : list[str]  — up to 3 lead actor names
-        keywords        : list[str]  — e.g. ["sequel", "independent film"]
+        director        : str    — yönetmen adı
+        lead_actors     : list[str]  — en fazla 3 başrol oyuncusu adı
+        keywords        : list[str]  — örn. ["sequel", "independent film"]
     """
-    # ── Release date ──────────────────────────────────────────────────────
+    # ── Vizyon tarihi ─────────────────────────────────────────────────────
     rd_raw = raw.get("release_date", "2010")
     if isinstance(rd_raw, str) and len(rd_raw) >= 10:
         rd = datetime.strptime(rd_raw[:10], "%Y-%m-%d").date()
@@ -126,28 +126,28 @@ def transform_raw_movie(raw: dict) -> pd.DataFrame:
     year  = rd.year
     month = rd.month
 
-    # ── Budget ────────────────────────────────────────────────────────────
+    # ── Bütçe ─────────────────────────────────────────────────────────────
     budget = float(raw.get("budget", 0) or 0)
     budget_adjusted = _cpi_adjust(budget, year)
 
-    # ── Runtime ───────────────────────────────────────────────────────────
+    # ── Süre ──────────────────────────────────────────────────────────────
     runtime = float(raw.get("runtime", 0) or 0)
 
-    # ── Companies ─────────────────────────────────────────────────────────
+    # ── Yapım şirketleri ──────────────────────────────────────────────────
     companies = [str(c) for c in raw.get("production_companies", [])]
     num_companies  = len(companies)
     is_major_studio = _is_major_studio(companies)
     company_hist_roi = get_company_roi(companies)
 
-    # ── Countries ─────────────────────────────────────────────────────────
+    # ── Ülkeler ───────────────────────────────────────────────────────────
     countries = [str(c).upper() for c in raw.get("production_countries", [])]
     is_us_production = int(any(c in ("US", "USA", "UNITED STATES OF AMERICA") for c in countries))
 
-    # ── Marketing ─────────────────────────────────────────────────────────
+    # ── Pazarlama ─────────────────────────────────────────────────────────
     hp = raw.get("homepage")
     has_homepage = int(bool(hp and str(hp).strip()))
 
-    # ── Genres ────────────────────────────────────────────────────────────
+    # ── Türler ────────────────────────────────────────────────────────────
     genres = [str(g) for g in raw.get("genres", [])]
     genre_features = {col: 0 for col in _GENRE_COLS}
     for g in genres:
@@ -156,26 +156,26 @@ def transform_raw_movie(raw: dict) -> pd.DataFrame:
             genre_features[key] = 1
     num_genres = len(genres)
 
-    # ── Franchise / Series ────────────────────────────────────────────────
+    # ── Franchise / Seri ──────────────────────────────────────────────────
     btc = raw.get("belongs_to_collection", False)
     keywords = [str(k).lower() for k in raw.get("keywords", [])]
     kw_sequel = int("sequel" in keywords)
     kw_independent_film = int("independent film" in keywords)
     is_franchise = int(bool(btc) or kw_sequel or ":" in str(raw.get("title", "")))
 
-    # ── Season ────────────────────────────────────────────────────────────
+    # ── Sezon ─────────────────────────────────────────────────────────────
     is_summer  = int(month in (6, 7, 8))
     is_holiday = int(month in (11, 12))
 
-    # ── Monthly franchise density ─────────────────────────────────────────
+    # ── Aylık franchise yoğunluğu ─────────────────────────────────────────
     monthly_franchise_density = _monthly_franchise_density(rd, is_franchise)
 
-    # ── Director ──────────────────────────────────────────────────────────
+    # ── Yönetmen ──────────────────────────────────────────────────────────
     director = str(raw.get("director", "") or "")
     director_film_count   = get_director_film_count(director) if director else 0
     director_collab_count = get_director_collab_count(director) if director else 0
 
-    # ── Actors ────────────────────────────────────────────────────────────
+    # ── Oyuncular ─────────────────────────────────────────────────────────
     lead_actors = [str(a) for a in raw.get("lead_actors", [])]
     actor_hist_roi = get_actor_roi(lead_actors) if lead_actors else get_global_prior()
 

@@ -1,6 +1,6 @@
 """
-Generic temporal validation utilities for ML pipelines.
-Designed to be reusable across ML projects.
+ML pipeline'ları için genel amaçlı temporal validasyon yardımcıları.
+Farklı ML projelerinde yeniden kullanılabilir olacak şekilde tasarlanmıştır.
 """
 
 from __future__ import annotations
@@ -26,34 +26,34 @@ def walk_forward_cv(
     beta: int = 2,
 ) -> pd.DataFrame:
     """
-    Sliding-window temporal cross-validation for year-indexed datasets.
+    Yıl indeksli veri setleri için sliding-window temporal cross-validation.
 
-    For each fold:
-      - train on [start, start + train_window - 1]
-      - validate on [train_end + 1, train_end + val_window]
-      - slide by step years
+    Her fold için:
+      - [start, start + train_window - 1] üzerinde eğitim
+      - [train_end + 1, train_end + val_window] üzerinde validasyon
+      - step yıl kadar kaydır
 
-    Folds where either split has fewer than min_train_n / min_val_n rows
-    or a single class are skipped.
+    Herhangi bir split'in min_train_n / min_val_n'den az satırı veya tek sınıfı
+    varsa o fold atlanır.
 
     Parameters
     ----------
-    df           : DataFrame with year_col and target columns
-    features     : feature column names to use
-    target       : binary target column
-    year_col     : integer year column (e.g. 'release_year')
-    model        : sklearn-compatible estimator (cloned per fold — not mutated)
-    train_window : number of years in the training window (default 8)
-    val_window   : number of years in the validation window (default 2)
-    step         : sliding step in years (default 1)
-    start_year   : first training year; uses dataset min if None
-    min_train_n  : minimum training rows to run a fold (default 150)
-    min_val_n    : minimum validation rows to run a fold (default 30)
-    beta         : beta for F-beta score (default 2)
+    df           : year_col ve target sütunlarını içeren DataFrame
+    features     : kullanılacak feature sütun adları
+    target       : binary target sütunu
+    year_col     : tamsayı yıl sütunu (örn. 'release_year')
+    model        : sklearn-uyumlu estimator (her fold'da klonlanır — değiştirilmez)
+    train_window : eğitim penceresindeki yıl sayısı (varsayılan 8)
+    val_window   : validasyon penceresindeki yıl sayısı (varsayılan 2)
+    step         : yıl bazında kaydırma adımı (varsayılan 1)
+    start_year   : ilk eğitim yılı; None ise veri setinin minimumu kullanılır
+    min_train_n  : bir fold'u çalıştırmak için minimum eğitim satırı (varsayılan 150)
+    min_val_n    : bir fold'u çalıştırmak için minimum validasyon satırı (varsayılan 30)
+    beta         : F-beta skoru için beta (varsayılan 2)
 
     Returns
     -------
-    DataFrame with columns:
+    Şu sütunlara sahip DataFrame:
         train_period, val_period, n_train, n_val,
         hit_rate_val, f{beta}_train, f{beta}_val, gap
 

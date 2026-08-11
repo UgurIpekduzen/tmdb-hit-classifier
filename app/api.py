@@ -1,4 +1,4 @@
-"""FastAPI inference endpoint for TMDB hit classifier."""
+"""TMDB hit sınıflandırıcısı için FastAPI inference endpoint'i."""
 
 import logging
 import os
@@ -27,7 +27,7 @@ THRESHOLD       = float(os.getenv("PREDICT_THRESHOLD", "0.5"))
 MAX_BATCH_SIZE  = int(os.getenv("MAX_BATCH_SIZE", "500"))
 DATASET_PATH    = os.getenv("DATASET_PATH", "data/tmdb_model.csv")
 
-# "genre_Science Fiction" contains a space — kept as-is for DataFrame column alignment.
+# "genre_Science Fiction" içinde boşluk var — DataFrame sütun hizalaması için olduğu gibi bırakıldı.
 FEATURES: list[str] = [
     "budget_adjusted", "runtime", "num_companies",
     "is_major_studio", "is_us_production", "has_homepage",
@@ -41,7 +41,7 @@ FEATURES: list[str] = [
 ]
 
 def _predict_proba_raw(df: pd.DataFrame) -> list[float]:
-    """Standalone predict helper usable before `app` is fully initialised."""
+    """`app` tam başlatılmadan önce de kullanılabilen bağımsız predict yardımcı fonksiyonu."""
     raw = _model.predict(df)
     if hasattr(raw, "ndim") and raw.ndim == 2:
         return raw[:, 1].tolist()
@@ -86,7 +86,7 @@ app = FastAPI(
 )
 
 
-# ── Schemas ──────────────────────────────────────────────────────────────────
+# ── Şemalar ──────────────────────────────────────────────────────────────────
 
 class MovieInput(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
@@ -152,6 +152,7 @@ class MovieInput(BaseModel):
 
     def to_dataframe(self) -> pd.DataFrame:
         d = self.model_dump(by_alias=False)
+        # Pydantic alanı boşluk içeremediği için gerçek sütun adına geri çeviriyoruz
         d["genre_Science Fiction"] = d.pop("genre_science_fiction")
         return pd.DataFrame([d])[FEATURES]
 
@@ -206,7 +207,7 @@ class DriftResponse(BaseModel):
     prediction_drift: PredictionDrift | None
 
 
-# ── Endpoints ─────────────────────────────────────────────────────────────────
+# ── Endpoint'ler ─────────────────────────────────────────────────────────────
 
 @app.get("/health")
 def health():
@@ -228,9 +229,9 @@ def info():
 @app.post("/drift", response_model=DriftResponse)
 def drift(movies: list[MovieInput]):
     """
-    Compare a batch of recent requests against the training reference distribution.
+    Yakın zamandaki bir istek grubunu eğitim referans dağılımıyla karşılaştırır.
 
-    Returns per-feature drift (with direction and risk score) and prediction drift.
+    Feature bazlı drift (yön ve risk skoru ile) ve tahmin drift'ini döndürür.
     """
     if _reference is None:
         raise HTTPException(status_code=503, detail="Reference distribution not available")
@@ -254,6 +255,7 @@ def drift(movies: list[MovieInput]):
     return DriftResponse(
         n_features=len(rows),
         n_drifted=sum(r.drift for r in rows),
+        # risk_score = psi × importance; 0.1 üstü "yüksek risk" olarak kabul edilir
         n_high_risk=sum(1 for r in rows if r.risk_score is not None and r.risk_score > 0.1),
         features=rows,
         prediction_drift=pred_drift,
@@ -301,10 +303,10 @@ def predict_batch(movies: list[MovieInput]):
     ])
 
 
-# ── Raw input schema ──────────────────────────────────────────────────────────
+# ── Ham girdi şeması ─────────────────────────────────────────────────────────
 
 class RawMovieInput(BaseModel):
-    """Human-friendly raw movie input. Features are derived automatically."""
+    """Kullanıcı dostu ham film girdisi. Feature'lar otomatik olarak türetilir."""
     title:                  str              = Field(default="", description="Film adı")
     budget:                 float            = Field(default=0.0, ge=0, description="Prodüksiyon bütçesi (nominal USD)")
     runtime:                float            = Field(default=0.0, ge=0, le=600, description="Süre (dakika)")
@@ -322,10 +324,10 @@ class RawMovieInput(BaseModel):
 @app.post("/predict/raw", response_model=PredictResponse)
 def predict_raw(movie: RawMovieInput):
     """
-    Accept raw, human-friendly movie data and derive the 26 model features automatically.
+    Ham, kullanıcı dostu film verisini kabul eder ve 26 model feature'ını otomatik türetir.
 
-    Handles CPI budget adjustment, genre/keyword encoding, major-studio detection,
-    season features, and historical ROI lookup from training data.
+    CPI bütçe düzeltmesini, tür/keyword encoding'ini, majör stüdyo tespitini,
+    sezon feature'larını ve eğitim verisinden tarihsel ROI sorgusunu üstlenir.
     """
     if _model is None:
         raise HTTPException(status_code=503, detail="Model not loaded")
