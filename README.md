@@ -136,10 +136,10 @@ set et (bu durumda `task up-mlflow` ile bir sunucu ayakta olmalı).
 Sırasıyla çalıştırılmalı, her biri bir sonrakinin girdisini üretir:
 
 ```bash
-jupyter notebook notebooks/preprocess.ipynb  # ham veri → data/tmdb_movies_clean.csv + cast/crew/companies/keywords
-jupyter notebook notebooks/eda.ipynb          # temizlenmiş veri → data/tmdb_model.csv (26 feature)
-jupyter notebook notebooks/tuning.ipynb       # tuned_models → notebooks/artifacts/tuning_artifacts.joblib
-jupyter notebook notebooks/modeling.ipynb     # tuning çıktısını yükler, final modeli MLflow Registry'ye kaydeder
+notebooks/preprocess.ipynb  # ham veri → data/tmdb_movies_clean.csv + cast/crew/companies/keywords
+notebooks/eda.ipynb         # temizlenmiş veri → data/tmdb_model.csv (26 feature)
+notebooks/tuning.ipynb      # tuned_models → notebooks/artifacts/tuning_artifacts.joblib
+notebooks/modeling.ipynb    # tuning çıktısını yükler, final modeli MLflow Registry'ye kaydeder
 ```
 
 `tuning.ipynb`/`modeling.ipynb`'deki `USE_MLFLOW` flag'i `False` iken (varsayılan)
