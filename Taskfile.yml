@@ -1,0 +1,146 @@
+version: "3"
+
+vars:
+  DC: docker compose
+  COMPOSE_FILE: docker-compose.yaml
+  PROJECT: tmdb-mlflow
+  MLFLOW_SERVICE: mlflow
+  MLFLOW_PORT: 5000
+  BACKUP_DIR: backups
+  API_PORT: 8000
+  API_HOST: 0.0.0.0
+
+silent: true
+
+tasks:
+  default:
+    desc: Kullanılabilir görevleri listeler
+    cmds:
+      - task --list-all
+
+  up-mlflow:
+    desc: MLflow servisini başlatır
+    cmds:
+      - "{{.DC}} -f {{.COMPOSE_FILE}} -p {{.PROJECT}} up -d {{.MLFLOW_SERVICE}}"
+
+  down-mlflow:
+    desc: MLflow servisini durdurur
+    cmds:
+      - "{{.DC}} -f {{.COMPOSE_FILE}} -p {{.PROJECT}} stop {{.MLFLOW_SERVICE}}"
+
+  purge-mlflow:
+    desc: MLflow servisini durdurur ve volume'u siler
+    cmds:
+      - "{{.DC}} -f {{.COMPOSE_FILE}} -p {{.PROJECT}} down -v"
+
+  restart-mlflow:
+    desc: MLflow servisini yeniden başlatır
+    cmds:
+      - "{{.DC}} -f {{.COMPOSE_FILE}} -p {{.PROJECT}} restart {{.MLFLOW_SERVICE}}"
+
+  ps-mlflow:
+    desc: MLflow servisi durumunu gösterir
+    cmds:
+      - "{{.DC}} -f {{.COMPOSE_FILE}} -p {{.PROJECT}} ps {{.MLFLOW_SERVICE}}"
+
+  logs-mlflow:
+    desc: MLflow loglarını takip eder
+    cmds:
+      - "{{.DC}} -f {{.COMPOSE_FILE}} -p {{.PROJECT}} logs -f {{.MLFLOW_SERVICE}}"
+
+  url-mlflow:
+    desc: MLflow UI URL'ini yazdırır
+    cmds:
+      - 'echo "MLflow UI: http://localhost:{{.MLFLOW_PORT}}"'
+
+  backup-mlflow:
+    desc: MLflow DB ve artifact'larını yedekler
+    vars:
+      BACKUP_FILE: "{{.BACKUP_DIR}}/mlflow_backup_{{now | date \"20060102_150405\"}}.tar.gz"
+    cmds:
+      - mkdir -p {{.BACKUP_DIR}}
+      - "{{.DC}} -f {{.COMPOSE_FILE}} -p {{.PROJECT}} exec -T {{.MLFLOW_SERVICE}} sh -lc \"tar -czf - -C / mlflow\" > {{.BACKUP_FILE}}"
+      - echo "Yedek oluşturuldu {{.BACKUP_FILE}}"
+
+  restore-mlflow:
+    desc: "En son yedeği (veya FILE=... ile belirtileni) geri yükler"
+    cmds:
+      - |
+        RESTORE_FILE="{{.FILE}}"
+        if [ -z "$RESTORE_FILE" ]; then
+          RESTORE_FILE="$(ls -t {{.BACKUP_DIR}}/mlflow_backup_*.tar.gz 2>/dev/null | head -1)"
+        fi
+        if [ -z "$RESTORE_FILE" ]; then
+          echo "Yedek bulunamadı. FILE=<path> ile belirtin veya önce backup-mlflow çalıştırın."
+          exit 1
+        fi
+        echo "Geri yükleniyor: $RESTORE_FILE"
+        {{.DC}} -f {{.COMPOSE_FILE}} -p {{.PROJECT}} stop {{.MLFLOW_SERVICE}}
+        docker run --rm \
+          -v {{.PROJECT}}_mlflow_data:/mlflow \
+          -v {{.PWD}}/{{.BACKUP_DIR}}:/backup \
+          alpine sh -c "rm -rf /mlflow/* && tar -xzf /backup/$(basename $RESTORE_FILE) -C /"
+        {{.DC}} -f {{.COMPOSE_FILE}} -p {{.PROJECT}} start {{.MLFLOW_SERVICE}}
+        echo "Geri yükleme tamamlandı: $RESTORE_FILE"
+
+  env-mlflow:
+    desc: MLflow container içindeki env değişkenlerini gösterir
+    cmds:
+      - "{{.DC}} -f {{.COMPOSE_FILE}} -p {{.PROJECT}} exec {{.MLFLOW_SERVICE}} env"
+
+  nuke-mlflow:
+    desc: MLflow container, volume ve tüm verilerini tamamen siler
+    cmds:
+      - echo "UYARI - Bu işlem MLflow container, volume ve tüm verileri siler."
+      - "{{.DC}} -f {{.COMPOSE_FILE}} -p {{.PROJECT}} down -v --remove-orphans"
+
+  up-all:
+    desc: MLflow + API + UI servislerini birlikte başlatır
+    cmds:
+      - "{{.DC}} -f {{.COMPOSE_FILE}} -p {{.PROJECT}} up -d"
+
+  down-all:
+    desc: Tüm servisleri durdurur
+    cmds:
+      - "{{.DC}} -f {{.COMPOSE_FILE}} -p {{.PROJECT}} down"
+
+  up-api:
+    desc: Yalnızca API container'ını başlatır
+    cmds:
+      - "{{.DC}} -f {{.COMPOSE_FILE}} -p {{.PROJECT}} up -d api"
+
+  down-api:
+    desc: API container'ını durdurur
+    cmds:
+      - "{{.DC}} -f {{.COMPOSE_FILE}} -p {{.PROJECT}} stop api"
+
+  run-api:
+    desc: FastAPI inference servisini başlatır (production)
+    env:
+      PYTHONPATH: "{{.PWD}}"
+    cmds:
+      - uvicorn app.api:app --host {{.API_HOST}} --port {{.API_PORT}}
+
+  run-api-dev:
+    desc: FastAPI inference servisini --reload ile başlatır (geliştirme)
+    env:
+      PYTHONPATH: "{{.PWD}}"
+    cmds:
+      - uvicorn app.api:app --host {{.API_HOST}} --port {{.API_PORT}} --reload
+
+  run-ui:
+    desc: Streamlit demo UI'ı yerel Python ile başlatır
+    env:
+      PYTHONPATH: "{{.PWD}}"
+    cmds:
+      - streamlit run app/ui.py
+
+  up-ui:
+    desc: Streamlit demo UI container'ını başlatır
+    cmds:
+      - "{{.DC}} -f {{.COMPOSE_FILE}} -p {{.PROJECT}} up -d ui"
+
+  down-ui:
+    desc: Streamlit demo UI container'ını durdurur
+    cmds:
+      - "{{.DC}} -f {{.COMPOSE_FILE}} -p {{.PROJECT}} stop ui"
