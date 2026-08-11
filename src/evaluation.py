@@ -7,15 +7,11 @@ from datetime import datetime
 logging.getLogger("mlflow").setLevel(logging.ERROR)
 warnings.filterwarnings("ignore", module="mlflow")
 
-import mlflow
-import mlflow.lightgbm
-import mlflow.sklearn
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from IPython.display import display
 from lightgbm import LGBMClassifier
-from mlflow.tracking import MlflowClient
 from sklearn.base import clone
 from sklearn.pipeline import Pipeline
 from sklearn.calibration import calibration_curve
@@ -27,6 +23,8 @@ from sklearn.metrics import (
     classification_report,
     mean_squared_error, mean_absolute_error, r2_score,
 )
+
+from src import mlflow_utils as mlu
 
 MIN_SIG = 0.065  # Bootstrap CI minimum anlamlı Δ eşiği (Bölüm 12)
 
@@ -190,16 +188,17 @@ def evaluate_test(
 
     plt.tight_layout()
 
-    # MLflow loglama
-    if experiment_name:
+    # MLflow loglama (USE_MLFLOW=False ise atlanır)
+    if experiment_name and mlu.USE_MLFLOW:
+        import mlflow
         experiment = mlflow.get_experiment_by_name(experiment_name)
         if experiment:
             run_name = (
                 f"test_eval_{model_name}_{datetime.now():%Y%m%d_%H%M}"
                 if model_name else f"test_eval_{datetime.now():%Y%m%d_%H%M}"
             )
-            with mlflow.start_run(run_name=run_name,
-                                  experiment_id=experiment.experiment_id):
+            with mlu.maybe_run(run_name=run_name,
+                               experiment_id=experiment.experiment_id):
                 tags = {
                     "type":  "test_evaluation",
                     "stage": "test",
@@ -209,15 +208,17 @@ def evaluate_test(
                     tags["feature_version"] = feature_version
                 if extra_tags:
                     tags.update(extra_tags)
-                mlflow.set_tags(tags)
-                mlflow.log_metrics({
+                mlu.set_tags(tags)
+                mlu.log_metrics({
                     f"test_{k.lower().replace('-', '_')}": v
                     for k, v in test_metrics.items()
                 })
-                mlflow.log_figure(fig, "test_evaluation.png")
+                mlu.log_figure(fig, "test_evaluation.png")
                 if features is not None:
-                    mlflow.log_dict({"features": features}, "features.json")
+                    mlu.log_dict({"features": features}, "features.json")
             print(f"✓ Test metrikleri MLflow'a kaydedildi")
+    elif experiment_name:
+        print("○ MLflow devre dışı (USE_MLFLOW=False) — test metrikleri kaydedilmedi")
 
     plt.show()
 
@@ -248,8 +249,17 @@ def register_champion(
 
     Returns
     -------
-    stage : "Production" | "Staging"
+    stage : "Production" | "Staging" | "skipped"
     """
+    if not mlu.USE_MLFLOW:
+        print("○ MLflow devre dışı (USE_MLFLOW=False) — model registry'ye kayıt atlandı.")
+        return "skipped"
+
+    import mlflow
+    import mlflow.lightgbm
+    import mlflow.sklearn
+    from mlflow.tracking import MlflowClient
+
     client = MlflowClient()
 
     # Mevcut Production şampiyonu var mı?
@@ -316,7 +326,7 @@ def _bootstrap_f2_ci(
     n_boot: int = 1000,
     seed: int = 42,
 ) -> tuple[float, float]:
-    """Stratified bootstrap F2 %95 CI. Returns (low, high)."""
+    """Stratified bootstrap F2 %95 GA. (low, high) döndürür."""
     rng     = np.random.default_rng(seed)
     y_test  = np.array(y_test)
     y_pred  = np.array(y_pred)
@@ -436,23 +446,23 @@ def bootstrap_ci(
     verbose: bool = True,
 ) -> pd.DataFrame:
     """
-    Stratified bootstrap confidence intervals for binary classification metrics.
+    Binary sınıflandırma metrikleri için stratified bootstrap güven aralıkları.
 
     Parameters
     ----------
-    y_true    : true binary labels
-    y_prob    : predicted probabilities for the positive class
-    y_pred    : hard predictions; derived from threshold if None
-    threshold : decision threshold used when y_pred is None (default 0.5)
-    metrics   : subset of ["F2","PR-AUC","ROC-AUC","Precision","Recall"]; all if None
-    n_boot    : bootstrap iterations (default 1000)
-    ci_alpha  : two-sided alpha level (default 0.05 → 95% CI)
-    beta      : beta for F-beta score (default 2)
-    seed      : random seed for reproducibility
+    y_true    : gerçek binary etiketler
+    y_prob    : pozitif sınıf için tahmin edilen olasılıklar
+    y_pred    : hard tahminler; None ise threshold'dan türetilir
+    threshold : y_pred None olduğunda kullanılan karar eşiği (varsayılan 0.5)
+    metrics   : ["F2","PR-AUC","ROC-AUC","Precision","Recall"] alt kümesi; None ise hepsi
+    n_boot    : bootstrap iterasyon sayısı (varsayılan 1000)
+    ci_alpha  : iki taraflı alpha seviyesi (varsayılan 0.05 → %95 GA)
+    beta      : F-beta skoru için beta (varsayılan 2)
+    seed      : tekrarlanabilirlik için random seed
 
     Returns
     -------
-    DataFrame indexed by metric with columns: point, ci_low, ci_high, ci_width
+    Metrik bazlı indekslenmiş, point, ci_low, ci_high, ci_width sütunlarına sahip DataFrame
 
     Examples
     --------
@@ -522,26 +532,26 @@ def feature_drop_test(
     sig_threshold: float = MIN_SIG,
 ) -> tuple[pd.DataFrame, pd.DataFrame, str]:
     """
-    Test whether dropping features causes a statistically significant F2 loss.
+    Feature'ları drop etmenin istatistiksel olarak anlamlı bir F2 kaybına yol açıp açmadığını test eder.
 
-    Trains two clones of model — one with all features, one without drop —
-    finds optimal PR-curve threshold on val, then compares Bootstrap CI on test.
+    Model'in iki klonu eğitilir — biri tüm feature'larla, biri drop olmadan —
+    val üzerinde optimal PR-curve eşiği bulunur, ardından test'te Bootstrap GA karşılaştırılır.
 
     Parameters
     ----------
-    df            : full DataFrame (features + target)
-    features      : current feature list (baseline)
-    drop          : features to remove for the reduced model
-    target        : binary target column
-    model         : sklearn-compatible estimator (cloned, not mutated)
-    mask_train/val/test : boolean Series for temporal splits
-    n_boot        : bootstrap iterations (default 1000)
-    sig_threshold : minimum meaningful Δ (default MIN_SIG = 0.065)
+    df            : tam DataFrame (feature'lar + target)
+    features      : mevcut feature listesi (baseline)
+    drop          : reduced model için çıkarılacak feature'lar
+    target        : binary target sütunu
+    model         : sklearn-uyumlu estimator (klonlanır, değiştirilmez)
+    mask_train/val/test : temporal split'ler için boolean Series
+    n_boot        : bootstrap iterasyon sayısı (varsayılan 1000)
+    sig_threshold : anlamlı kabul edilecek minimum Δ (varsayılan MIN_SIG = 0.065)
 
     Returns
     -------
-    ci_base : bootstrap_ci DataFrame for baseline model
-    ci_drop : bootstrap_ci DataFrame for reduced model
+    ci_base : baseline model için bootstrap_ci DataFrame'i
+    ci_drop : reduced model için bootstrap_ci DataFrame'i
     decision: 'drop' | 'keep'
 
     Examples
@@ -612,13 +622,13 @@ def calibration_report(
     n_bins: int = 10,
 ) -> None:
     """
-    Plot calibration curves and Brier scores for one or more data splits.
+    Bir veya daha fazla veri split'i için kalibrasyon eğrilerini ve Brier skorlarını çizer.
 
     Parameters
     ----------
-    splits     : list of (split_name, y_true, y_prob) tuples
-    model_name : model identifier used in the plot title
-    n_bins     : number of calibration bins (default 10)
+    splits     : (split_name, y_true, y_prob) tuple'larından oluşan liste
+    model_name : grafik başlığında kullanılan model tanımlayıcısı
+    n_bins     : kalibrasyon bin sayısı (varsayılan 10)
 
     Examples
     --------

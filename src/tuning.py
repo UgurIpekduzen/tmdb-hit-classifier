@@ -8,9 +8,6 @@ from typing import Callable
 logging.getLogger("mlflow").setLevel(logging.ERROR)
 warnings.filterwarnings("ignore", module="mlflow")
 
-import mlflow
-import mlflow.lightgbm
-import mlflow.sklearn
 import numpy as np
 from lightgbm import LGBMClassifier
 from sklearn.linear_model import LogisticRegression
@@ -20,6 +17,7 @@ from sklearn.model_selection import cross_val_score, cross_validate
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
+from src import mlflow_utils as mlu
 from src.modeling import MAIN_METRIC, RANDOM_STATE, get_cv
 
 _SKLEARN_SCORING = {
@@ -49,12 +47,12 @@ def optimal_threshold_from_pr(
     y_prob,
 ) -> tuple[float, float, float, float]:
     """
-    Find the decision threshold that maximises F1 on the precision-recall curve.
+    Precision-recall eğrisinde F1'i maksimize eden karar eşiğini bulur.
 
     Parameters
     ----------
-    y_true : true binary labels
-    y_prob : predicted probabilities for the positive class
+    y_true : gerçek binary etiketler
+    y_prob : pozitif sınıf için tahmin edilen olasılıklar
 
     Returns
     -------
@@ -281,28 +279,29 @@ def tune_model(model_name: str, X, y, task_type: str,
     if max_gap is not None and best_gap is not None:
         print(f"  Train-val gap: {best_gap:.4f}  ({'✓ eşik altı' if best_gap <= max_gap else '⚠ eşik üstü'})")
 
-    # MLflow'a logla
-    with mlflow.start_run(run_name=f"tuning_{model_name}_{datetime.now():%Y%m%d_%H%M}"):
+    # MLflow'a logla (USE_MLFLOW=False ise atlanır)
+    with mlu.maybe_run(run_name=f"tuning_{model_name}_{datetime.now():%Y%m%d_%H%M}"):
         tags = {"stage": "tuning", "model_type": model_name, "type": "tuning"}
         if feature_version:
             tags["feature_version"] = feature_version
-        mlflow.set_tags(tags)
-        mlflow.log_params(study.best_params)
-        mlflow.log_metric(f"tuned_{main_metric}",    real_val_score)
-        mlflow.log_metric(f"baseline_{main_metric}", baseline_score)
-        mlflow.log_metric("improvement", real_val_score - baseline_score)
+        mlu.set_tags(tags)
+        mlu.log_params(study.best_params)
+        mlu.log_metric(f"tuned_{main_metric}",    real_val_score)
+        mlu.log_metric(f"baseline_{main_metric}", baseline_score)
+        mlu.log_metric("improvement", real_val_score - baseline_score)
         if max_gap is not None:
-            mlflow.log_param("max_gap", max_gap)
+            mlu.log_param("max_gap", max_gap)
         if best_gap is not None:
-            mlflow.log_metric("best_gap", best_gap)
+            mlu.log_metric("best_gap", best_gap)
 
         estimator = best_model[-1] if isinstance(best_model, Pipeline) else best_model
-        if isinstance(estimator, LGBMClassifier):
-            mlflow.lightgbm.log_model(estimator, "model")
-        else:
-            mlflow.sklearn.log_model(best_model, "model")
+        is_lgbm   = isinstance(estimator, LGBMClassifier)
+        mlu.log_model(estimator if is_lgbm else best_model, is_lgbm=is_lgbm)
 
+    if mlu.USE_MLFLOW:
         print("✓ Tuning sonuçları ve model MLflow'a kaydedildi")
+    else:
+        print("○ MLflow devre dışı (USE_MLFLOW=False) — tuning sonuçları kaydedilmedi")
 
     print(f"\n✓ best_model güncellendi — tuned {model_name}")
     return best_model, study

@@ -215,7 +215,8 @@ __pycache__/
 .venv/
 
 # MLflow
-mlflow_backups/
+backups/
+mlruns/
 
 # SHAP çıktısı (yeniden üretilebilir, repoya eklenmez)
 shap_importance.png

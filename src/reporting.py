@@ -5,8 +5,7 @@ import tempfile
 from datetime import datetime
 from pathlib import Path
 
-import mlflow
-
+from src import mlflow_utils as mlu
 from src.modeling import MAIN_METRIC
 
 
@@ -40,6 +39,13 @@ def generate_experiment_report(
         )
         print(report)
     """
+    if not mlu.USE_MLFLOW:
+        msg = "○ MLflow devre dışı (USE_MLFLOW=False) — run geçmişi yok, deneysel rapor üretilemedi."
+        print(msg)
+        return msg
+
+    import mlflow
+
     main_metric = MAIN_METRIC[task_type]
 
     all_runs = mlflow.search_runs(

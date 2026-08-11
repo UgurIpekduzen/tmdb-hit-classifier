@@ -9,8 +9,6 @@ warnings.filterwarnings("ignore", module="mlflow")
 
 import matplotlib.pyplot as plt
 import mlflow
-import mlflow.lightgbm
-import mlflow.sklearn
 import numpy as np
 import pandas as pd
 import shap
@@ -37,6 +35,8 @@ from sklearn.model_selection import (
     cross_validate,
 )
 from sklearn.pipeline import Pipeline
+
+from src import mlflow_utils as mlu
 
 RANDOM_STATE = 42
 
@@ -104,18 +104,18 @@ def get_scoring(task_type: str) -> dict:
 
 def quick_val_metrics(model, X, y, threshold: float = 0.5) -> dict:
     """
-    Leakage-free metrics on a held-out split — no MLflow logging.
+    Held-out split üzerinde leakage'a karşı güvenli metrikler — MLflow loglaması yok.
 
     Parameters
     ----------
-    model     : fitted sklearn-compatible classifier with predict_proba
-    X         : feature matrix
-    y         : true binary labels
-    threshold : decision threshold (default 0.5)
+    model     : predict_proba'ya sahip, fit edilmiş sklearn-uyumlu sınıflandırıcı
+    X         : feature matrisi
+    y         : gerçek binary etiketler
+    threshold : karar eşiği (varsayılan 0.5)
 
     Returns
     -------
-    dict with keys: F2, PR-AUC, ROC-AUC, F1, Precision, Recall
+    Şu anahtarlara sahip dict: F2, PR-AUC, ROC-AUC, F1, Precision, Recall
 
     Examples
     --------
@@ -222,7 +222,7 @@ def log_shap(model, X, model_name: str = "", task_type: str = "binary") -> pd.Se
         # XGBoost/CatBoost: native feature importance kullan (shap string format uyumsuzluğu)
         importances = estimator.feature_importances_
         mean_shap = pd.Series(np.array(importances, dtype=float), index=feature_names)
-        if mlflow.active_run():
+        if mlu.USE_MLFLOW and mlflow.active_run():
             mlflow.log_metrics({f"shap_{col}": float(val) for col, val in mean_shap.items()})
         return mean_shap
     elif isinstance(estimator, _tree_types):
@@ -240,7 +240,7 @@ def log_shap(model, X, model_name: str = "", task_type: str = "binary") -> pd.Se
                       show=False, max_display=20)
     ax.set_title(f"{prefix}SHAP Summary (Top 20)", fontsize=11, fontweight="bold")
     plt.tight_layout()
-    if mlflow.active_run():
+    if mlu.USE_MLFLOW and mlflow.active_run():
         mlflow.log_figure(fig, "shap_summary.png")
     plt.show()
     plt.close(fig)
@@ -250,13 +250,13 @@ def log_shap(model, X, model_name: str = "", task_type: str = "binary") -> pd.Se
                       plot_type="bar", show=False, max_display=20)
     ax.set_title(f"{prefix}SHAP Feature Importance (Top 20)", fontsize=11, fontweight="bold")
     plt.tight_layout()
-    if mlflow.active_run():
+    if mlu.USE_MLFLOW and mlflow.active_run():
         mlflow.log_figure(fig, "shap_importance.png")
     plt.show()
     plt.close(fig)
 
     mean_shap = pd.Series(np.abs(sv).mean(axis=0), index=feature_names)
-    if mlflow.active_run():
+    if mlu.USE_MLFLOW and mlflow.active_run():
         mlflow.log_metrics({f"shap_{col}": float(val) for col, val in mean_shap.items()})
 
     return mean_shap
@@ -269,8 +269,8 @@ def log_run(scenario: str, model_name: str, model, X, y, cv, task_type: str,
 
     run_name = f"baseline_{model_name}_{datetime.now():%Y%m%d_%H%M}"
 
-    with mlflow.start_run(run_name=run_name, nested=True):
-        mlflow.set_tags({
+    with mlu.maybe_run(run_name=run_name, nested=True):
+        mlu.set_tags({
             "stage":      "baseline",
             "scenario":   scenario,
             "model_type": model_name,
@@ -281,22 +281,20 @@ def log_run(scenario: str, model_name: str, model, X, y, cv, task_type: str,
         params = dict(estimator.get_params())
         if extra_params:
             params.update(extra_params)
-        mlflow.log_params(params)
+        mlu.log_params(params)
 
         val_metrics, train_metrics, val_stds = compute_cv_metrics(model, X, y, cv, task_type)
-        mlflow.log_metrics(val_metrics)
-        mlflow.log_metrics({f"train_{k}": v for k, v in train_metrics.items()})
+        mlu.log_metrics(val_metrics)
+        mlu.log_metrics({f"train_{k}": v for k, v in train_metrics.items()})
 
         fig = plot_confusion_matrix(model, X, y, f"{scenario} — {model_name}", task_type)
-        mlflow.log_figure(fig, "confusion_matrix.png")
+        mlu.log_figure(fig, "confusion_matrix.png")
         plt.close(fig)
 
         log_shap(model, X, model_name, task_type)
 
-        if isinstance(estimator, LGBMClassifier):
-            mlflow.lightgbm.log_model(estimator, "model")
-        else:
-            mlflow.sklearn.log_model(model, "model")
+        mlu.log_model(estimator if isinstance(estimator, LGBMClassifier) else model,
+                     is_lgbm=isinstance(estimator, LGBMClassifier))
 
         main_metric = MAIN_METRIC[task_type]
         gap = train_metrics[main_metric] - val_metrics[main_metric]
@@ -362,12 +360,13 @@ def compare_models(
         ax.legend(fontsize=9)
     plt.tight_layout()
 
-    experiment = mlflow.get_experiment_by_name(experiment_name)
-    if experiment:
-        with mlflow.start_run(run_name="comparison_chart",
-                              experiment_id=experiment.experiment_id):
-            mlflow.set_tag("type", "summary")
-            mlflow.log_figure(fig, "model_comparison.png")
+    if mlu.USE_MLFLOW:
+        experiment = mlflow.get_experiment_by_name(experiment_name)
+        if experiment:
+            with mlu.maybe_run(run_name="comparison_chart",
+                               experiment_id=experiment.experiment_id):
+                mlu.set_tag("type", "summary")
+                mlu.log_figure(fig, "model_comparison.png")
     plt.show()
     plt.close(fig)
 
@@ -454,7 +453,10 @@ def train_session(dataset_path: str, model_configs: dict, X, y,
     )
 
     experiment_name = Path(dataset_path).stem
-    mlflow.set_experiment(experiment_name)
+    if mlu.USE_MLFLOW:
+        mlflow.set_experiment(experiment_name)
+    else:
+        print("○ MLflow devre dışı (USE_MLFLOW=False) — run'lar kaydedilmeyecek")
 
     session_name = f"session_{scenario}_{datetime.now():%Y%m%d_%H%M}"
     models = {name: factory(imbalance_ratio) for name, factory in model_configs.items()}
@@ -464,9 +466,9 @@ def train_session(dataset_path: str, model_configs: dict, X, y,
         f"  |  oturum: {session_name}  |  task: {task_type}"
     )
 
-    with mlflow.start_run(run_name=session_name):
-        mlflow.set_tag("type", "session")
-        mlflow.log_params({
+    with mlu.maybe_run(run_name=session_name):
+        mlu.set_tag("type", "session")
+        mlu.log_params({
             "dataset":    experiment_name,
             "n_train":    len(X),
             "n_features": X.shape[1],
